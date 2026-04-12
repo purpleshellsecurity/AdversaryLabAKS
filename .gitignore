@@ -1,0 +1,17 @@
+# Runtime files
+lab_config.json
+credentials.txt
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+
+# Terraform (if you add it later)
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfvars
