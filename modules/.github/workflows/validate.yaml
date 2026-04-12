@@ -1,0 +1,146 @@
+name: Validate AKS Adversary Lab
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bicep-validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Bicep
+        run: |
+          az bicep install
+          az bicep version
+
+      - name: Validate main.bicep
+        run: az bicep build --file main.bicep
+
+      - name: Validate main_subscription.bicep
+        run: az bicep build --file main_subscription.bicep
+
+      - name: Validate all modules
+        run: |
+          for f in modules/*.bicep; do
+            echo "Checking $f..."
+            az bicep build --file "$f"
+          done
+
+  powershell-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+
+          $excludeRules = @(
+            'PSAvoidUsingWriteHost',
+            'PSAvoidUsingInvokeExpression',
+            'PSReviewUnusedParameter',
+            'PSAvoidUsingPlainTextForPassword',
+            'PSAvoidUsingConvertToSecureStringWithPlainText',
+            'PSUseSingularNouns',
+            'PSUseBOMForUnicodeEncodedFile',
+            'PSUseDeclaredVarsMoreThanAssignments',
+            'PSUseShouldProcessForStateChangingFunctions',
+            'PSShouldProcess',
+            'PSUseApprovedVerbs'
+          )
+
+          $results = Invoke-ScriptAnalyzer `
+            -Path . `
+            -Recurse `
+            -Severity Warning,Error `
+            -ExcludeRule $excludeRules
+
+          if ($results) {
+            $results | Format-Table -AutoSize
+            Write-Host "PSScriptAnalyzer found $($results.Count) issue(s)" -ForegroundColor Red
+            exit 1
+          }
+
+          Write-Host "No issues found!" -ForegroundColor Green
+
+  secret-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets with TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified
+
+  iac-scan:
+    runs-on: ubuntu-latest
+    needs: bicep-validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: bicep
+          soft_fail: true
+
+  k8s-validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate Kubernetes manifests
+        run: |
+          find kubernetes/ -name "*.yaml" -o -name "*.yml" | while read f; do
+            echo "Validating $f..."
+            kubeconform \
+              -strict \
+              -ignore-missing-schemas \
+              -kubernetes-version 1.34.0 \
+              "$f"
+          done
+
+  helm-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint Falco values
+        run: |
+          helm repo add falcosecurity https://falcosecurity.github.io/charts
+          helm repo update
+          helm lint falcosecurity/falco -f kubernetes/blue-team/falco-values.yaml
