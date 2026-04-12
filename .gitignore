@@ -1,17 +1,32 @@
-# Runtime files
-lab_config.json
+# Credentials and secrets
 credentials.txt
+lab_config.json
+*.pfx
+*.cer
+*.pem
+*.key
 
-# OS junk
+# Deployment outputs (may contain IPs, resource IDs)
+deploy-output*.json
+deployment-*.json
+azuredeploy.parameters.local.json
+
+# Logs
+*.log
+
+# Kubeconfig - never commit
+kubeconfig
+kubeconfig.yaml
+*.kubeconfig
+
+# Helm
+*.tgz
+charts/
+
+# OS files
 .DS_Store
 Thumbs.db
 
-# Editor folders
-.vscode/
-.idea/
-
-# Terraform (if you add it later)
-*.tfstate
-*.tfstate.backup
-.terraform/
-terraform.tfvars
+# Editor
+.vscode/settings.json
+*.swp
