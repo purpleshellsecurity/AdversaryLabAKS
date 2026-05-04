@@ -1,1 +1,12 @@
-# Copy from existing repo: kubernetes/monitoring/container-insights-config.yaml — no changes needed
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: container-azm-ms-agentconfig
+  namespace: kube-system
+data:
+  schema-version: v1
+  config-version: ver1
+  agent-settings: |-
+    [agent_settings.log_collection]
+      [agent_settings.log_collection.schema]
+        containerlog_schema_version = "v2"

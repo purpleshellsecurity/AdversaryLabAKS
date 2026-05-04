@@ -1,1 +1,35 @@
-# Copy from existing repo: kubernetes/network-policies/attacker-netpol.yaml — no changes needed
+# Attacker Namespace Network Policies
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-egress
+  namespace: attacker
+  labels:
+    adversary-lab/policy-type: "permissive"
+  annotations:
+    adversary-lab/mitre: "Enables T1046, T1550.001"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-victim-ingress
+  namespace: attacker
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: adversary-lab/role
+                operator: NotIn
+                values:
+                  - "target"

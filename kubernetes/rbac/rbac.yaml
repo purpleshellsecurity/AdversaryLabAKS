@@ -1,1 +1,131 @@
-# Copy from existing repo: kubernetes/rbac/rbac.yaml — no changes needed
+# AKS Adversary Lab - RBAC Definitions
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: red-team-operator
+  namespace: attacker
+  labels:
+    adversary-lab/role: "red-team"
+  annotations:
+    adversary-lab/mitre: "T1078"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: red-team-full-access
+  namespace: attacker
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/log", "pods/portforward"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: red-team-full-access-binding
+  namespace: attacker
+subjects:
+  - kind: ServiceAccount
+    name: red-team-operator
+    namespace: attacker
+roleRef:
+  kind: Role
+  name: red-team-full-access
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: victim-reader
+  namespace: victim
+  annotations:
+    adversary-lab/mitre: "T1613"
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: attacker-victim-reader
+  namespace: victim
+  annotations:
+    adversary-lab/mitre: "T1550.001"
+subjects:
+  - kind: ServiceAccount
+    name: red-team-operator
+    namespace: attacker
+roleRef:
+  kind: Role
+  name: victim-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring-reader
+  namespace: monitoring
+  labels:
+    adversary-lab/role: "blue-team"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: adversary-lab-monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "services", "endpoints", "namespaces", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: adversary-lab-monitoring-binding
+subjects:
+  - kind: ServiceAccount
+    name: monitoring-reader
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: adversary-lab-monitoring
+  apiGroup: rbac.authorization.k8s.io
+---
+# INTENTIONALLY MISCONFIGURED for T1098.006 escalation testing
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: overprivileged-sa
+  namespace: victim
+  annotations:
+    adversary-lab/mitre: "T1078, T1098.006"
+    adversary-lab/warning: "INTENTIONALLY MISCONFIGURED"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: overprivileged-sa-cluster-admin
+  annotations:
+    adversary-lab/mitre: "T1098.006"
+    adversary-lab/warning: "INTENTIONALLY MISCONFIGURED"
+subjects:
+  - kind: ServiceAccount
+    name: overprivileged-sa
+    namespace: victim
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io

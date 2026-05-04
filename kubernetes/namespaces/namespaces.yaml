@@ -1,1 +1,53 @@
-# Copy from existing repo: kubernetes/namespaces/namespaces.yaml — no changes needed
+# AKS Adversary Lab - Namespace Definitions
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: attacker
+  labels:
+    adversary-lab/role: "red-team"
+    pod-security.kubernetes.io/enforce: "privileged"
+    pod-security.kubernetes.io/enforce-version: "latest"
+    pod-security.kubernetes.io/audit: "privileged"
+    pod-security.kubernetes.io/warn: "baseline"
+  annotations:
+    adversary-lab/description: "Offensive security tools"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: victim
+  labels:
+    adversary-lab/role: "target"
+    pod-security.kubernetes.io/enforce: "baseline"
+    pod-security.kubernetes.io/enforce-version: "latest"
+    pod-security.kubernetes.io/audit: "restricted"
+    pod-security.kubernetes.io/warn: "restricted"
+  annotations:
+    adversary-lab/description: "Vulnerable workloads"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    adversary-lab/role: "blue-team"
+    pod-security.kubernetes.io/enforce: "privileged"
+    pod-security.kubernetes.io/enforce-version: "latest"
+    pod-security.kubernetes.io/audit: "baseline"
+    pod-security.kubernetes.io/warn: "baseline"
+  annotations:
+    adversary-lab/description: "Detection and monitoring tools"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security-tools
+  labels:
+    adversary-lab/role: "assessment"
+    pod-security.kubernetes.io/enforce: "restricted"
+    pod-security.kubernetes.io/enforce-version: "latest"
+    pod-security.kubernetes.io/audit: "restricted"
+    pod-security.kubernetes.io/warn: "restricted"
+  annotations:
+    adversary-lab/description: "Security assessment tools"

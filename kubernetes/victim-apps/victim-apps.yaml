@@ -1,1 +1,148 @@
-# Copy from existing repo: kubernetes/victim-apps/victim-apps.yaml — no changes needed
+# AKS Adversary Lab - Victim Applications
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dvwa
+  namespace: victim
+  labels:
+    app: dvwa
+    adversary-lab/role: "vulnerable-app"
+    adversary-lab/expose: "web"
+  annotations:
+    adversary-lab/mitre-techniques: "T1190"
+    adversary-lab/warning: "INTENTIONALLY VULNERABLE"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dvwa
+  template:
+    metadata:
+      labels:
+        app: dvwa
+        adversary-lab/expose: "web"
+    spec:
+      containers:
+        - name: dvwa
+          image: docker.io/vulnerables/web-dvwa:latest
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: MYSQL_HOSTNAME
+              value: "127.0.0.1"
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dvwa
+  namespace: victim
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
+  selector:
+    app: dvwa
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vulnerable-api
+  namespace: victim
+  labels:
+    app: vulnerable-api
+    adversary-lab/role: "vulnerable-app"
+    adversary-lab/expose: "web"
+  annotations:
+    adversary-lab/mitre-techniques: "T1552.001,T1528"
+    adversary-lab/warning: "INTENTIONALLY MISCONFIGURED"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vulnerable-api
+  template:
+    metadata:
+      labels:
+        app: vulnerable-api
+        adversary-lab/expose: "web"
+    spec:
+      containers:
+        - name: api
+          image: docker.io/hashicorp/http-echo:latest
+          args:
+            - "-text=Vulnerable API - Check /var/run/secrets/ for SA token"
+            - "-listen=:8080"
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: DATABASE_PASSWORD
+              value: "SuperSecretDBPassword123!"
+            - name: API_KEY
+              value: "sk-lab-FAKE-api-key-for-detection-testing-only"
+            - name: AZURE_CLIENT_SECRET
+              value: "lab-fake-client-secret-00000000"
+          resources:
+            requests: { cpu: "50m", memory: "32Mi" }
+            limits: { cpu: "200m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vulnerable-api
+  namespace: victim
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app: vulnerable-api
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-credentials
+  namespace: victim
+  labels:
+    adversary-lab/role: "target-secret"
+  annotations:
+    adversary-lab/mitre-techniques: "T1552.007"
+type: Opaque
+stringData:
+  username: "db_admin"
+  password: "VictimDBPassword456!"
+  connection-string: "Server=db.victim.svc;Database=app;User=db_admin;Password=VictimDBPassword456!"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-job
+  namespace: victim
+  labels:
+    app: backup
+    adversary-lab/role: "legitimate-workload"
+  annotations:
+    adversary-lab/mitre-techniques: "T1053.007"
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: docker.io/busybox:latest
+              command: ["/bin/sh", "-c", "echo 'Running scheduled backup...' && sleep 5 && echo 'Backup complete'"]
+              resources:
+                requests: { cpu: "50m", memory: "32Mi" }
+                limits: { cpu: "200m", memory: "128Mi" }
+          restartPolicy: OnFailure

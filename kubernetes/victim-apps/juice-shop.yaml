@@ -1,0 +1,77 @@
+# ============================================================================
+# AKS Adversary Lab - OWASP Juice Shop
+# Techniques: T1190 (Exploit Public-Facing Application)
+# Deliberately vulnerable Node.js/Angular application
+# DO NOT deploy in production environments
+# ============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: juice-shop
+  namespace: victim
+  labels:
+    app: juice-shop
+    adversary-lab/role: "vulnerable-app"
+    adversary-lab/expose: "web"
+  annotations:
+    adversary-lab/mitre-techniques: "T1190,T1552.001,T1078"
+    adversary-lab/description: "OWASP Juice Shop — deliberately vulnerable Node.js app"
+    adversary-lab/warning: "INTENTIONALLY VULNERABLE — do not deploy in production"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: juice-shop
+  template:
+    metadata:
+      labels:
+        app: juice-shop
+        adversary-lab/expose: "web"
+    spec:
+      containers:
+        - name: juice-shop
+          image: bkimminich/juice-shop:latest
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: NODE_ENV
+              value: "unsafe"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: juice-shop
+  namespace: victim
+  labels:
+    app: juice-shop
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  selector:
+    app: juice-shop

@@ -1,1 +1,157 @@
-# Copy from existing repo: kubernetes/red-team/red-team-tools.yaml — no changes needed
+# AKS Adversary Lab - Red Team Tool Deployments
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kdigger
+  namespace: attacker
+  labels:
+    app: kdigger
+    adversary-lab/tool-type: "recon"
+  annotations:
+    adversary-lab/mitre-techniques: "T1552.007,T1613,T1082,T1046"
+spec:
+  serviceAccountName: red-team-operator
+  containers:
+    - name: kdigger
+      image: docker.io/alpine:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          apk add --no-cache curl &&
+          curl -fSL "https://github.com/quarkslab/kdigger/releases/download/v1.5.1/kdigger-linux-amd64.tar.gz" | tar -xz &&
+          chmod +x kdigger-linux-amd64 &&
+          mv kdigger-linux-amd64 /usr/local/bin/kdigger &&
+          echo "kdigger ready. Run: kdigger dig" &&
+          sleep infinity
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+        limits: { cpu: "500m", memory: "512Mi" }
+  restartPolicy: Never
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cdk
+  namespace: attacker
+  labels:
+    app: cdk
+    adversary-lab/tool-type: "offensive"
+  annotations:
+    adversary-lab/mitre-techniques: "T1611,T1610,T1552.007,T1046,T1552.001"
+spec:
+  serviceAccountName: red-team-operator
+  containers:
+    - name: cdk
+      image: docker.io/alpine:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          apk add --no-cache curl &&
+          curl -fSL -o /usr/local/bin/cdk "https://github.com/cdk-team/CDK/releases/download/v1.5.2/cdk_linux_amd64" &&
+          chmod +x /usr/local/bin/cdk &&
+          echo "CDK ready. Run: cdk evaluate" &&
+          sleep infinity
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+        limits: { cpu: "500m", memory: "512Mi" }
+  restartPolicy: Never
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: peirates
+  namespace: attacker
+  labels:
+    app: peirates
+    adversary-lab/tool-type: "offensive"
+  annotations:
+    adversary-lab/mitre-techniques: "T1552.007,T1528,T1609,T1611,T1613,T1550.001"
+spec:
+  serviceAccountName: red-team-operator
+  containers:
+    - name: peirates
+      image: docker.io/alpine:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          apk add --no-cache curl xz &&
+          mkdir /tmp/p &&
+          curl -sL https://github.com/inguardians/peirates/releases/download/v1.1.28/peirates-linux-amd64.tar.xz | xz -d | tar xf - -C /tmp/p &&
+          find /tmp/p -type f -name peirates -exec cp {} /usr/local/bin/peirates \; &&
+          chmod +x /usr/local/bin/peirates &&
+          echo "Peirates ready. Run: peirates" &&
+          sleep infinity
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+        limits: { cpu: "500m", memory: "512Mi" }
+  restartPolicy: Never
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubectl
+  namespace: attacker
+  labels:
+    app: kubectl
+    adversary-lab/tool-type: "utility"
+  annotations:
+    adversary-lab/mitre-techniques: "T1609,T1613,T1552.007,T1098.006"
+spec:
+  serviceAccountName: red-team-operator
+  containers:
+    - name: kubectl
+      image: docker.io/bitnami/kubectl:latest
+      command: ["/bin/sh", "-c", "sleep infinity"]
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+        limits: { cpu: "500m", memory: "512Mi" }
+  restartPolicy: Never
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: net-scanner
+  namespace: attacker
+  labels:
+    app: net-scanner
+    adversary-lab/tool-type: "recon"
+  annotations:
+    adversary-lab/mitre-techniques: "T1046"
+spec:
+  serviceAccountName: red-team-operator
+  containers:
+    - name: scanner
+      image: docker.io/instrumentisto/nmap:latest
+      command: ["/bin/sh", "-c", "sleep infinity"]
+      resources:
+        requests: { cpu: "100m", memory: "64Mi" }
+        limits: { cpu: "500m", memory: "256Mi" }
+  restartPolicy: Never
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curler
+  namespace: attacker
+  labels:
+    app: curler
+    adversary-lab/tool-type: "utility"
+  annotations:
+    adversary-lab/mitre-techniques: "T1552.005"
+spec:
+  serviceAccountName: red-team-operator
+  containers:
+    - name: curler
+      image: docker.io/alpine:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          apk add --no-cache curl wget jq &&
+          echo "Ready. Example:" &&
+          echo '  curl -s -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq' &&
+          sleep infinity
+      resources:
+        requests: { cpu: "50m", memory: "32Mi" }
+        limits: { cpu: "200m", memory: "128Mi" }
+  restartPolicy: Never
