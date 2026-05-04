@@ -19,10 +19,17 @@ param adminGroupObjectId string
 @description('Your public IP address for API server authorized access')
 param authorizedIpRange string
 
-@description('Log Analytics retention in days')
+@description('Log Analytics retention in days — ignored when existingWorkspaceResourceId is provided')
 @minValue(30)
 @maxValue(730)
 param logRetentionDays int = 90
+
+@description('''
+Optional: Resource ID of an existing Log Analytics workspace.
+Leave empty to create a new workspace.
+Format: /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}
+''')
+param existingWorkspaceResourceId string = ''
 
 @description('Kubernetes version')
 param kubernetesVersion string = '1.34.2'
@@ -50,9 +57,28 @@ param tags object = {
   ManagedBy: 'Bicep'
 }
 
+// ── Workspace resolution ────────────────────────────────────────────────────
+// Supports both new workspace creation and existing workspace reuse.
+// All downstream modules reference resolvedWorkspaceId / resolvedWorkspaceName
+// so the rest of the template is unaware of which path was taken.
+//
+// Resource ID format:
+//   /subscriptions/{sub}/resourceGroups/{rg}/providers/
+//   Microsoft.OperationalInsights/workspaces/{name}
+
+var useExistingWorkspace = existingWorkspaceResourceId != ''
+
+var resolvedWorkspaceId = useExistingWorkspace
+  ? existingWorkspaceResourceId
+  : logAnalytics.outputs.workspaceResourceId
+
+var resolvedWorkspaceName = useExistingWorkspace
+  ? last(split(existingWorkspaceResourceId, '/'))
+  : logAnalytics.outputs.workspaceName
+
 // ── Layer 1: Foundation ─────────────────────────────────────────────────────
 
-module logAnalytics 'modules/log_analytics.bicep' = {
+module logAnalytics 'modules/log_analytics.bicep' = if (!useExistingWorkspace) {
   name: 'deploy-log-analytics'
   params: {
     location: location
@@ -76,7 +102,7 @@ module acr 'modules/aks_acr.bicep' = {
   params: {
     location: location
     namePrefix: namePrefix
-    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceResourceId
+    logAnalyticsWorkspaceId: resolvedWorkspaceId
     tags: tags
   }
 }
@@ -86,7 +112,7 @@ module keyVault 'modules/aks_keyvault.bicep' = {
   params: {
     location: location
     namePrefix: namePrefix
-    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceResourceId
+    logAnalyticsWorkspaceId: resolvedWorkspaceId
     tags: tags
   }
 }
@@ -103,7 +129,7 @@ module aksCluster 'modules/aks_cluster.bicep' = {
     userNodeVmSize: userNodeVmSize
     systemSubnetId: networking.outputs.systemSubnetId
     userSubnetId: networking.outputs.userSubnetId
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.workspaceResourceId
+    logAnalyticsWorkspaceResourceId: resolvedWorkspaceId
     adminGroupObjectId: adminGroupObjectId
     authorizedIpRange: authorizedIpRange
     enableDefender: enableDefender
@@ -126,7 +152,7 @@ module aksDiagnostics 'modules/aks_diagnostics.bicep' = {
   name: 'deploy-aks-diagnostics'
   params: {
     aksClusterName: aksCluster.outputs.clusterName
-    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceResourceId
+    logAnalyticsWorkspaceId: resolvedWorkspaceId
   }
 }
 
@@ -136,14 +162,14 @@ module containerInsights 'modules/container_insights.bicep' = {
     location: location
     namePrefix: namePrefix
     aksClusterName: aksCluster.outputs.clusterName
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.workspaceResourceId
+    logAnalyticsWorkspaceResourceId: resolvedWorkspaceId
   }
 }
 
 module sentinel 'modules/aks_sentinel.bicep' = if (enableSentinelSolutions) {
   name: 'deploy-aks-sentinel'
   params: {
-    workspaceName: logAnalytics.outputs.workspaceName
+    workspaceName: resolvedWorkspaceName
   }
 }
 
@@ -158,7 +184,7 @@ module aksPolicy 'modules/aks_policy.bicep' = {
   name: 'deploy-aks-policy'
   params: {
     initiativeId: aksPolicyDefs.outputs.initiativeId
-    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceResourceId
+    logAnalyticsWorkspaceId: resolvedWorkspaceId
   }
 }
 
@@ -167,8 +193,9 @@ module aksPolicy 'modules/aks_policy.bicep' = {
 output clusterName string = aksCluster.outputs.clusterName
 output clusterFqdn string = aksCluster.outputs.clusterFqdn
 output kubectlConnectCommand string = 'az aks get-credentials --resource-group ${resourceGroup().name} --name ${aksCluster.outputs.clusterName}'
-output logAnalyticsWorkspaceName string = logAnalytics.outputs.workspaceName
-output logAnalyticsWorkspaceId string = logAnalytics.outputs.workspaceResourceId
+output logAnalyticsWorkspaceName string = resolvedWorkspaceName
+output logAnalyticsWorkspaceId string = resolvedWorkspaceId
+output workspaceIsNew bool = !useExistingWorkspace
 output acrLoginServer string = acr.outputs.acrLoginServer
 output keyVaultName string = keyVault.outputs.keyVaultName
 output keyVaultUri string = keyVault.outputs.keyVaultUri
