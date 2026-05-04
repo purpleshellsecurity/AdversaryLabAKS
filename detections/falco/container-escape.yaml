@@ -1,0 +1,18 @@
+# ============================================================================
+# Falco Rule: Container Escape via nsenter
+# MITRE ATT&CK: T1611 - Escape to Host
+# ============================================================================
+
+- rule: Container Escape via nsenter
+  desc: Detects nsenter execution which may indicate container escape (MITRE T1611)
+  condition: >
+    spawned_process and
+    container and
+    proc.name = nsenter
+  output: >
+    nsenter executed in container — possible escape attempt
+    (user=%user.name command=%proc.cmdline
+     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
+     image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [mitre_privilege_escalation, T1611]

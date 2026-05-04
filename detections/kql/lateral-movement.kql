@@ -1,0 +1,18 @@
+// ============================================================================
+// Detection: Lateral Movement via Cross-Namespace Token Use
+// MITRE ATT&CK: T1550.001 - Application Access Token
+// Source: AKSAudit
+// ============================================================================
+
+// Detect service account from one namespace authenticating to another namespace's resources
+AKSAudit
+| where TimeGenerated > ago(1h)
+| where Verb in ("get", "list", "create", "exec")
+| extend Username = tostring(User.username)
+| extend SourceNamespace = extract("system:serviceaccount:([^:]+):", 1, Username)
+| extend TargetNamespace = tostring(ObjectRef.namespace)
+| where isnotempty(SourceNamespace)
+| where isnotempty(TargetNamespace)
+| where SourceNamespace != TargetNamespace
+| project TimeGenerated, Username, SourceNamespace, TargetNamespace, Verb, Resource = tostring(ObjectRef.resource)
+| extend MitreTechnique = "T1550.001"

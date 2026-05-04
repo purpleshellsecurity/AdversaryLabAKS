@@ -1,0 +1,19 @@
+# ============================================================================
+# Falco Rule: Service Account Token Theft
+# MITRE ATT&CK: T1528 - Steal Application Access Token
+# ============================================================================
+
+- rule: Read ServiceAccount Token in Container
+  desc: Detects processes reading the mounted SA token inside a container (MITRE T1528)
+  condition: >
+    open_read and
+    container and
+    (fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/token" or
+     fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+  output: >
+    SA token read inside container
+    (user=%user.name command=%proc.cmdline file=%fd.name
+     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
+     image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [mitre_credential_access, T1528]

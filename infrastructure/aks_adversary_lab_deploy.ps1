@@ -21,10 +21,10 @@
     Your public IP for API server authorized access (auto-detected if omitted).
 
 .EXAMPLE
-    ./aks_adversary_lab_deploy.ps1
+    ./infrastructure/aks_adversary_lab_deploy.ps1
 
 .EXAMPLE
-    ./aks_adversary_lab_deploy.ps1 -Location "eastus2" -AdminGroupObjectId "abc-123"
+    ./infrastructure/aks_adversary_lab_deploy.ps1 -Location "eastus2" -AdminGroupObjectId "abc-123"
 #>
 
 [CmdletBinding()]
@@ -86,11 +86,11 @@ function Test-Prerequisites {
     }
 
     if (-not (Test-Path (Join-Path $PSScriptRoot "main.bicep"))) {
-        Write-ColoredOutput "[!] main.bicep not found in script directory." "Red"
+        Write-ColoredOutput "[!] main.bicep not found in infrastructure directory." "Red"
         exit 1
     }
     if (-not (Test-Path (Join-Path $PSScriptRoot "main_subscription.bicep"))) {
-        Write-ColoredOutput "[!] main_subscription.bicep not found in script directory." "Red"
+        Write-ColoredOutput "[!] main_subscription.bicep not found in infrastructure directory." "Red"
         exit 1
     }
     Write-ColoredOutput "  [+] Bicep templates found." "Green"
@@ -163,7 +163,7 @@ function Get-InteractiveParameters {
     if (-not $AuthorizedIpRange) {
         Write-ColoredOutput "`n  [*] Detecting your public IP..." "Yellow"
         $AuthorizedIpRange = Get-PublicIPAddress
-        if ($AuthorizedIpRange) {
+        if ($null -ne $AuthorizedIpRange) {
             Write-ColoredOutput "  [+] Detected IP: $AuthorizedIpRange" "Green"
             $confirm = Read-Host "  Use this IP for API server access? (Y/n)"
             if ($confirm -eq 'n' -or $confirm -eq 'N') {
@@ -213,7 +213,7 @@ function Show-ConfigurationSummary {
     Write-ColoredOutput "  Defender:        $(if($Params.EnableDefender){"Enabled (~`$56/mo)"}else{"Disabled (using Falco only)"})" "White"
 
     Write-ColoredOutput "`n[!] This will create Azure resources that incur costs." "Yellow"
-    Write-ColoredOutput "    Estimated: ~$150-200/month (AKS + logging + Defender)" "Yellow"
+    Write-ColoredOutput "    Estimated: ~`$150-200/month (AKS + logging + Defender)" "Yellow"
 
     $proceed = Read-Host "`nProceed with deployment? (Y/n)"
     if ($proceed -eq 'n' -or $proceed -eq 'N') {
@@ -276,10 +276,10 @@ function Deploy-SubscriptionResources {
             -Location $Params.Location `
             -TemplateFile (Join-Path $PSScriptRoot "main_subscription.bicep") `
             -TemplateParameterObject @{
-                location                     = $Params.Location
-                logAnalyticsWorkspaceId       = $RgDeployment.Outputs.logAnalyticsWorkspaceId.Value
-                enableDefenderForContainers   = $Params.EnableDefender
-                enableDefenderForKeyVault     = $Params.EnableDefender
+                location                   = $Params.Location
+                logAnalyticsWorkspaceId    = $RgDeployment.Outputs.logAnalyticsWorkspaceId.Value
+                enableDefenderForContainers = $Params.EnableDefender
+                enableDefenderForKeyVault   = $Params.EnableDefender
             } `
             -Verbose | Out-Null
 
@@ -315,6 +315,9 @@ function Set-KubectlAccess {
 }
 
 function Install-KubernetesManifests {
+    # Repo root is one level up from infrastructure/
+    $repoRoot = Split-Path $PSScriptRoot -Parent
+
     if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) {
         Write-ColoredOutput "`n[!] kubectl not found. Apply manifests manually after installing kubectl." "Yellow"
         return
@@ -323,13 +326,13 @@ function Install-KubernetesManifests {
     Write-ColoredOutput "`n[*] Applying Kubernetes manifests..." "Yellow"
 
     $manifests = @(
-        @{ Path = "./kubernetes/monitoring/container-insights-config.yaml"; Desc = "Container Insights v2 schema (ContainerLogV2)" },
-        @{ Path = "./kubernetes/namespaces/namespaces.yaml";               Desc = "Namespaces (attacker, victim, monitoring, security-tools)" },
-        @{ Path = "./kubernetes/network-policies/victim-netpol.yaml";      Desc = "Victim namespace network policies" },
-        @{ Path = "./kubernetes/network-policies/attacker-netpol.yaml";    Desc = "Attacker namespace network policies" },
-        @{ Path = "./kubernetes/network-policies/monitoring-netpol.yaml";  Desc = "Monitoring namespace network policies" },
-        @{ Path = "./kubernetes/rbac/rbac.yaml";                           Desc = "RBAC roles and bindings" },
-        @{ Path = "./kubernetes/victim-apps/victim-apps.yaml";             Desc = "Victim applications (DVWA, vulnerable API)" }
+        @{ Path = "$repoRoot/kubernetes/monitoring/container-insights-config.yaml"; Desc = "Container Insights v2 schema (ContainerLogV2)" },
+        @{ Path = "$repoRoot/kubernetes/namespaces/namespaces.yaml";               Desc = "Namespaces (attacker, victim, monitoring, security-tools)" },
+        @{ Path = "$repoRoot/kubernetes/network-policies/victim-netpol.yaml";      Desc = "Victim namespace network policies" },
+        @{ Path = "$repoRoot/kubernetes/network-policies/attacker-netpol.yaml";    Desc = "Attacker namespace network policies" },
+        @{ Path = "$repoRoot/kubernetes/network-policies/monitoring-netpol.yaml";  Desc = "Monitoring namespace network policies" },
+        @{ Path = "$repoRoot/kubernetes/rbac/rbac.yaml";                           Desc = "RBAC roles and bindings" },
+        @{ Path = "$repoRoot/kubernetes/victim-apps/victim-apps.yaml";             Desc = "Victim applications (DVWA, vulnerable API)" }
     )
 
     foreach ($manifest in $manifests) {
@@ -350,6 +353,8 @@ function Install-KubernetesManifests {
 function Show-DeploymentSummary {
     param([hashtable]$Params, $RgDeployment)
 
+    $repoRoot = Split-Path $PSScriptRoot -Parent
+
     $outCluster = if ($RgDeployment.Outputs.clusterName)               { $RgDeployment.Outputs.clusterName.Value }               else { "$($Params.NamePrefix)-aks" }
     $outFqdn    = if ($RgDeployment.Outputs.clusterFqdn)               { $RgDeployment.Outputs.clusterFqdn.Value }               else { "(not available)" }
     $outAcr     = if ($RgDeployment.Outputs.acrLoginServer)            { $RgDeployment.Outputs.acrLoginServer.Value }            else { "(not available)" }
@@ -366,10 +371,10 @@ function Show-DeploymentSummary {
     Write-ColoredOutput "`n=== Post-Deployment Steps ===" "Yellow"
     Write-ColoredOutput "  1. Deploy Falco:" "White"
     Write-ColoredOutput "     helm repo add falcosecurity https://falcosecurity.github.io/charts" "Cyan"
-    Write-ColoredOutput "     helm install falco falcosecurity/falco -n monitoring -f kubernetes/blue-team/falco-values.yaml" "Cyan"
+    Write-ColoredOutput "     helm install falco falcosecurity/falco -n monitoring -f $repoRoot/helm/falco-values.yaml" "Cyan"
     Write-ColoredOutput ""
     Write-ColoredOutput "  2. Deploy red team tools:" "White"
-    Write-ColoredOutput "     kubectl apply -f kubernetes/red-team/red-team-tools.yaml" "Cyan"
+    Write-ColoredOutput "     kubectl apply -f $repoRoot/kubernetes/red-team/red-team-tools.yaml" "Cyan"
     Write-ColoredOutput ""
     Write-ColoredOutput "  3. Wait 15-30 minutes for Defender and log ingestion" "White"
     Write-ColoredOutput ""

@@ -24,14 +24,14 @@ jobs:
           az bicep version
 
       - name: Validate main.bicep
-        run: az bicep build --file main.bicep
+        run: az bicep build --file infrastructure/main.bicep
 
       - name: Validate main_subscription.bicep
-        run: az bicep build --file main_subscription.bicep
+        run: az bicep build --file infrastructure/main_subscription.bicep
 
       - name: Validate all modules
         run: |
-          for f in modules/*.bicep; do
+          for f in infrastructure/modules/*.bicep; do
             echo "Checking $f..."
             az bicep build --file "$f"
           done
@@ -102,7 +102,7 @@ jobs:
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@v12
         with:
-          directory: .
+          directory: infrastructure/
           framework: bicep
           soft_fail: true
 
@@ -139,8 +139,11 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      - name: Lint Falco values
+      - name: Validate Falco values
         run: |
           helm repo add falcosecurity https://falcosecurity.github.io/charts
           helm repo update
-          helm lint falcosecurity/falco -f kubernetes/blue-team/falco-values.yaml
+          helm template falco falcosecurity/falco \
+            -f helm/falco-values.yaml \
+            --dry-run \
+            > /dev/null && echo "Falco values are valid"

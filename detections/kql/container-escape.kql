@@ -1,0 +1,12 @@
+// ============================================================================
+// Detection: Container Escape via nsenter
+// MITRE ATT&CK: T1611 - Escape to Host
+// Source: AKSAudit + ContainerLogV2
+// ============================================================================
+
+// Detect nsenter execution inside a container — strong indicator of escape attempt
+ContainerLogV2
+| where TimeGenerated > ago(1h)
+| where LogMessage has "nsenter"
+| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage
+| extend MitreTechnique = "T1611"

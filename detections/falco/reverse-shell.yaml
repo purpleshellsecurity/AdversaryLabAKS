@@ -1,0 +1,20 @@
+# ============================================================================
+# Falco Rule: Reverse Shell Detection
+# MITRE ATT&CK: T1059 - Command and Scripting Interpreter
+# ============================================================================
+
+- rule: Reverse Shell in Container
+  desc: Detects common reverse shell patterns in containers
+  condition: >
+    spawned_process and
+    container and
+    (proc.cmdline contains "/dev/tcp/" or
+     proc.cmdline contains "bash -i" or
+     (proc.name in (nc, ncat, nmap) and proc.cmdline contains "-e"))
+  output: >
+    Reverse shell detected in container
+    (process=%proc.name command=%proc.cmdline
+     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
+     image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [mitre_execution, T1059]

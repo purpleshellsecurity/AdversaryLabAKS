@@ -1,0 +1,17 @@
+# Security Exceptions
+# Document accepted risk here with justification, approver, and expiration.
+# Expired exceptions will automatically fail the pipeline.
+#
+# Template:
+# - id: EXCEPTION-001
+#   finding: "CVE-XXXX-XXXX or check ID"
+#   tool: "Trivy / Checkov / etc"
+#   severity: "Critical / High / Medium / Low"
+#   file: "path/to/affected/file"
+#   justification: "Why this cannot be fixed right now"
+#   approver: "GitHub username"
+#   approved_date: "YYYY-MM-DD"
+#   expiration_date: "YYYY-MM-DD"
+#   tracking_issue: "https://github.com/org/repo/issues/XXX"
+
+exceptions: []

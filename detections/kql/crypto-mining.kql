@@ -1,0 +1,21 @@
+// ============================================================================
+// Detection: Cryptocurrency Mining in Container
+// MITRE ATT&CK: T1496 - Resource Hijacking
+// Source: ContainerLogV2 + InsightsMetrics
+// ============================================================================
+
+// Process-based detection
+ContainerLogV2
+| where TimeGenerated > ago(1h)
+| where LogMessage has_any ("xmrig", "minerd", "stratum+tcp", "cryptonight", "pool.minexmr")
+| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage
+| extend MitreTechnique = "T1496"
+
+// CPU anomaly detection
+// InsightsMetrics
+// | where TimeGenerated > ago(1h)
+// | where Namespace == "container.azm.ms/cpu"
+// | where Name == "cpuUsageNanoCores"
+// | extend Tags = parse_json(Tags)
+// | where todouble(Val) > 1800000000 // >1.8 cores sustained = suspicious
+// | project TimeGenerated, PodName = tostring(Tags.podName), Namespace = tostring(Tags.podNamespace), CpuNanoCores = Val

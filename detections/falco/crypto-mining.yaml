@@ -1,0 +1,21 @@
+# ============================================================================
+# Falco Rule: Cryptocurrency Mining
+# MITRE ATT&CK: T1496.001 - Compute Hijacking
+# ============================================================================
+
+- rule: Crypto Mining Process Detected
+  desc: Detects known crypto mining binaries or pool connections (MITRE T1496.001)
+  condition: >
+    spawned_process and
+    container and
+    (proc.name in (xmrig, minerd, minergate, cpuminer) or
+     proc.cmdline contains "stratum+tcp" or
+     proc.cmdline contains "pool.minexmr" or
+     proc.cmdline contains "cryptonight")
+  output: >
+    Crypto mining activity detected
+    (process=%proc.name command=%proc.cmdline
+     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
+     image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [mitre_impact, T1496, T1496.001]
