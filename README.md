@@ -1,251 +1,340 @@
 # AKS Adversary Lab
-A comprehensive AKS-based cybersecurity lab environment designed for security professionals to practice container threat detection, incident response, adversary emulation, and Kubernetes security monitoring using Microsoft Sentinel and Azure security services.
 
-Extension of [Adversary Lab](https://github.com/purpleshellsecurity/adversary_lab) for **Azure Kubernetes Service**
+A production-grade AKS security lab for container threat detection, adversary emulation, and detection engineering — aligned to the [MITRE ATT&CK Containers Matrix](https://attack.mitre.org/matrices/enterprise/containers/).
 
-## Overview
+Extension of [Adversary Lab](https://github.com/purpleshellsecurity/adversary_lab) for **Azure Kubernetes Service**.
 
-The AKS Adversary Lab provides a complete container security monitoring environment that includes:
+> ⚠️ **Disclaimer:** This project deploys intentionally vulnerable workloads and offensive tooling. Deploy only in isolated Azure subscriptions you control.
 
-- **AKS Cluster** with Azure CNI Overlay + Cilium eBPF dataplane
-- **Microsoft Sentinel** SIEM/SOAR with 7 container-focused solutions
-- **Log Analytics Workspace** with all 11 AKS diagnostic categories
-- **Container Insights** for pod/node inventory, container logs, and metrics
-- **Microsoft Defender for Containers** eBPF sensor for runtime detection (optional)
-- **Azure Policy Initiative** with 10 security policies (5 custom + 5 built-in)
-- **Azure Container Registry** with diagnostic logging
-- **Key Vault** with CSI integration and diagnostic logging
-- **Falco** runtime security with custom syscall-based rules
-- **Red Team Tools** — kdigger, CDK, Peirates, kubectl, nmap, curl/wget
-- **Victim Applications** — DVWA, vulnerable API, intentional misconfigs
+---
+
+## What Gets Deployed
+
+| Component | Details |
+|---|---|
+| **AKS Cluster** | Azure CNI Overlay + Cilium eBPF dataplane, Entra ID RBAC, no local accounts |
+| **Microsoft Sentinel** | 7 container-focused solutions, onboarded to Log Analytics |
+| **Log Analytics Workspace** | All 11 AKS diagnostic categories, 90-day retention (or bring your own) |
+| **Container Insights** | Pod/node inventory, container logs, metrics via DCR |
+| **Defender for Containers** | eBPF sensor for runtime detection (optional) |
+| **Azure Policy Initiative** | 10 policies (5 custom + 5 built-in) at subscription scope |
+| **Azure Container Registry** | Standard SKU, AcrPull role for AKS kubelet identity |
+| **Key Vault** | RBAC auth, purge protection, network deny-by-default |
+| **Falco** | Runtime security via Helm, custom syscall-based rules |
+| **Red Team Tools** | kdigger, CDK, Peirates, kubectl, nmap, curl — in `attacker` namespace |
+| **Victim Apps** | Juice Shop, DVWA, vulnerable API, intentional misconfigs |
+
+---
 
 ## Repository Structure
 
 ```
 aks-adversary-lab/
+├── .github/
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── workflows/
+│       ├── validate.yaml          # Runs on every PR and push — never touches Azure
+│       └── deploy.yaml            # Manual trigger — deploy or destroy the full stack
 │
-├── infrastructure/                          # Deploy once, change rarely
-│   ├── modules/                             # Bicep modules (layered architecture)
-│   │   ├── log_analytics.bicep              # Log Analytics workspace (90-day retention)
-│   │   ├── aks_networking.bicep             # VNet, 3 subnets, NSGs
-│   │   ├── aks_cluster.bicep                # AKS with full security profile
-│   │   ├── aks_diagnostics.bicep            # All 11 diagnostic categories
-│   │   ├── container_insights.bicep         # DCR + DCRA for Container Insights
-│   │   ├── aks_acr.bicep                    # Azure Container Registry + diagnostics
-│   │   ├── aks_acr_role.bicep               # AcrPull role assignment
-│   │   ├── aks_keyvault.bicep               # Key Vault with RBAC + diagnostics
-│   │   ├── aks_sentinel.bicep               # Sentinel + 7 solutions
-│   │   ├── aks_policy_defs.bicep            # Policy definitions + initiative (subscription)
-│   │   └── aks_policy.bicep                 # Policy assignment + roles (RG scope)
-│   ├── main.bicep                           # Resource Group deployment orchestration
-│   ├── main_subscription.bicep              # Subscription-level resources
-│   └── aks_adversary_lab_deploy.ps1         # Main deployment script
+├── infrastructure/                # Bicep — deploy once, change rarely
+│   ├── modules/                   # Layered architecture (Foundation → Compute → Monitoring → Governance)
+│   │   ├── log_analytics.bicep
+│   │   ├── aks_networking.bicep
+│   │   ├── aks_cluster.bicep
+│   │   ├── aks_diagnostics.bicep
+│   │   ├── container_insights.bicep
+│   │   ├── aks_acr.bicep
+│   │   ├── aks_acr_role.bicep
+│   │   ├── aks_keyvault.bicep
+│   │   ├── aks_sentinel.bicep
+│   │   ├── aks_policy_defs.bicep  # Subscription-scope policy definitions + initiative
+│   │   └── aks_policy.bicep       # Policy assignment at resource group scope
+│   ├── main.bicep                 # Resource group orchestrator
+│   ├── main_subscription.bicep    # Subscription-scope resources (Defender pricing, activity logs)
+│   └── aks_adversary_lab_deploy.ps1  # Local deploy script (alternative to GitHub Actions)
 │
-├── kubernetes/                              # Kubernetes manifests only
-│   ├── namespaces/namespaces.yaml           # 4 namespaces with PSA labels
-│   ├── monitoring/container-insights-config.yaml
-│   ├── network-policies/                    # Cilium network policies per namespace
-│   ├── rbac/rbac.yaml                       # Roles, bindings, intentional misconfigs
-│   ├── red-team/red-team-tools.yaml         # kdigger, CDK, Peirates, kubectl, nmap, curler
-│   └── victim-apps/victim-apps.yaml         # DVWA, vulnerable API, test secrets
+├── kubernetes/                    # K8s manifests — applied after cluster is up
+│   ├── namespaces/
+│   ├── monitoring/
+│   ├── network-policies/
+│   ├── rbac/
+│   ├── red-team/
+│   └── victim-apps/
 │
-├── helm/                                    # Helm values files
-│   └── falco-values.yaml                    # Falco Helm values with custom rules
+├── helm/
+│   └── falco-values.yaml          # Falco Helm values + custom rules
 │
-├── detections/                              # Actively developed detection content
-│   ├── kql/                                 # KQL detection rules (standalone)
-│   │   ├── container-escape.kql
-│   │   ├── crypto-mining.kql
-│   │   └── lateral-movement.kql
-│   └── falco/                               # Falco rules (standalone, source of truth)
-│       ├── token-theft.yaml
-│       ├── container-escape.yaml
-│       ├── crypto-mining.yaml
-│       └── reverse-shell.yaml
+├── detections/                    # Source of truth for all detection content
+│   ├── kql/                       # Microsoft Sentinel analytics rules
+│   └── falco/                     # Falco runtime rules (assembled into falco-values.yaml)
 │
-├── attack-simulations/                      # Red team scripts mapped to MITRE
-│   ├── token-theft.sh
-│   └── lateral-movement.sh
+├── attack-simulations/            # Red team scripts mapped to MITRE ATT&CK
+│   ├── token-theft.sh             # T1528
+│   └── lateral-movement.sh        # T1550.001
 │
-├── docs/                                    # Documentation
-│   ├── SECURITY.md                          # Scanning policy and SLAs
-│   ├── security-exceptions.yaml             # Accepted risk register
-│   └── KQL_Container_Reference.md           # Query reference for all log tables
+├── tools/
+│   ├── setup-oidc.ps1             # One-time OIDC setup for GitHub Actions
+│   └── detection-validator/       # Python tool — validates KQL + Falco rule structure
 │
-└── .github/
-    ├── PULL_REQUEST_TEMPLATE.md
-    └── workflows/
-        └── validate.yaml                    # CI/CD pipeline
+└── docs/
+    ├── SECURITY.md
+    ├── security-exceptions.yaml   # Accepted risk register with justification + expiration
+    └── KQL_Container_Reference.md
 ```
 
-## Architecture
+---
 
-![AKS Adversary Lab Architecture](docs/diagram.png)
+## CI/CD Pipeline
 
-## Prerequisites
+Every pull request and push to `main` runs `validate.yaml` automatically. The deploy workflow is always manual — nothing deploys to Azure without you clicking a button.
 
-### Required Software
+### Validation Pipeline (`validate.yaml`)
 
-| Software | Windows | macOS |
-|----------|---------|-------|
-| PowerShell 7 | `winget install --id Microsoft.PowerShell` | `brew install --cask powershell` |
-| Azure PowerShell | `Install-Module -Name Az -Force` | `Install-Module -Name Az -Force` |
-| Azure CLI | `winget install -e --id Microsoft.AzureCLI` | `brew install azure-cli` |
-| Bicep CLI | `winget install -e --id Microsoft.Bicep` | `az bicep install` |
-| kubectl | `winget install -e --id Kubernetes.kubectl` | `brew install kubectl` |
-| kubelogin | `az aks install-cli` | `brew install kubelogin` |
-| Helm | `winget install -e --id Helm.Helm` | `brew install helm` |
+| Job | Tool | What it checks |
+|---|---|---|
+| `bicep-validate` | `az bicep build` | Syntax + linting on all Bicep files |
+| `powershell-lint` | PSScriptAnalyzer | PowerShell script quality |
+| `secret-scan` | TruffleHog | Verified secrets in commit history |
+| `k8s-validate` | kubeconform | Kubernetes manifest schema validation |
+| `helm-lint` | Helm | Falco values validity |
+| `detection-validate` | validate.py | KQL + Falco rule structure |
+| `python-sast` | Bandit | Python tooling security scan |
+| `iac-scan` | Checkov | Bicep IaC security scan (soft fail) |
+| `trivy-scan` | Trivy | Container CVE scan — Juice Shop image |
+
+### Deploy Workflow (`deploy.yaml`)
+
+Triggered manually via `workflow_dispatch`. Presents a form with inputs, runs preflight validation, then deploys or destroys the full stack in the correct order.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+| Tool | Install |
+|---|---|
+| PowerShell 7 | `winget install Microsoft.PowerShell` / `brew install --cask powershell` |
+| Azure PowerShell | `Install-Module Az -Force` |
+| Azure CLI | `winget install Microsoft.AzureCLI` / `brew install azure-cli` |
+| kubectl | `az aks install-cli` |
+| Helm | `winget install Helm.Helm` / `brew install helm` |
+| gh CLI *(optional)* | `winget install GitHub.cli` / `brew install gh` — auto-sets GitHub secrets |
 
 ### Azure Requirements
 
-- Azure subscription with **Contributor** permissions
-- Ability to create resources at both **Resource Group** and **Subscription** levels
-- Entra ID security group for AKS cluster-admin access
+- Azure subscription where you have **Owner** or **Contributor + User Access Administrator**
+- Permission to create resources at **subscription scope** (policy definitions, Defender pricing)
+- An **Entra ID security group** whose members will get `cluster-admin` on the AKS cluster
 
-## Quick Start
+---
 
-### 1. Clone the Repository
+## Option A — GitHub Actions (Recommended)
+
+This is the primary path. One-time setup, then spin up and down with a button click.
+
+### Step 1 — OIDC Setup (run once)
+
+From your local machine, logged into Azure:
 
 ```powershell
-git clone https://github.com/purpleshellsecurity/aks-adversary-lab.git
-cd aks-adversary-lab
+Connect-AzAccount
+
+./tools/setup-oidc.ps1 `
+  -GitHubOrg  "purpleshellsecurity" `
+  -GitHubRepo "aks-adversary-lab"
 ```
 
-### 2. Deploy the Lab
+The script:
+- Creates an App Registration with a federated credential (no client secrets)
+- Assigns the required roles at subscription and resource group scope
+- Sets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` as GitHub secrets — automatically if `gh` CLI is installed, otherwise prints values to copy manually
 
-```powershell
-# Default (Defender disabled for cost savings)
-./infrastructure/aks_adversary_lab_deploy.ps1
+### Step 2 — Create GitHub Environment
 
-# With Defender for Containers enabled
-./infrastructure/aks_adversary_lab_deploy.ps1 -EnableDefender $true
-```
+1. Go to **Repo Settings → Environments → New environment**
+2. Name it exactly **`lab`**
+3. Optionally add yourself as a **required reviewer** — every deploy/destroy will pause for your approval before running
 
-### 3. Post-Deploy Setup
+### Step 3 — Deploy
+
+1. Go to **Actions → Deploy AKS Adversary Lab → Run workflow**
+2. Fill in the form:
+
+| Field | Description |
+|---|---|
+| `action` | `deploy` or `destroy` |
+| `name_prefix` | Short lowercase prefix for resource names (e.g. `purpleshell`) |
+| `location` | Azure region |
+| `authorized_ip` | Your public IP in CIDR format — `curl ifconfig.me` then append `/32` |
+| `admin_group_id` | Object ID of your Entra ID cluster-admin group |
+| `existing_workspace_id` | *(Optional)* Resource ID of an existing Log Analytics workspace — leave blank to create a new one |
+
+3. Click **Run workflow**
+
+The workflow deploys in layers — Bicep first, then namespaces, RBAC, network policies, Falco, monitoring, victim apps, red team tools. Takes roughly 15–20 minutes end to end.
+
+### Step 4 — Connect
 
 ```bash
-# Configure kubectl
+az aks get-credentials \
+  --resource-group rg-<name_prefix>-aks-lab \
+  --name <name_prefix>-aks
+
 kubelogin convert-kubeconfig -l azurecli
 kubectl get nodes
-
-# Apply manifests
-kubectl apply -f kubernetes/namespaces/namespaces.yaml
-kubectl apply -f kubernetes/network-policies/victim-netpol.yaml
-kubectl apply -f kubernetes/network-policies/attacker-netpol.yaml
-kubectl apply -f kubernetes/network-policies/monitoring-netpol.yaml
-kubectl apply -f kubernetes/rbac/rbac.yaml
-kubectl apply -f kubernetes/victim-apps/victim-apps.yaml
-
-# Install Falco
-helm repo add falcosecurity https://falcosecurity.github.io/charts
-helm install falco falcosecurity/falco -n monitoring -f helm/falco-values.yaml
-
-# Deploy red team tools
-kubectl apply -f kubernetes/red-team/red-team-tools.yaml
 ```
 
-### 4. Run Attack Simulations
+### Step 5 — Tear Down
+
+Same workflow, same inputs, change `action` to `destroy`. Deletes the resource group and cleans up orphaned subscription-scope policy assignments.
+
+> **Note:** Defender for Cloud pricing tiers and custom policy definitions at subscription scope are **not** removed automatically. See the destroy job summary for manual cleanup commands.
+
+---
+
+## Option B — Local PowerShell Deploy
+
+Use this when you want to deploy directly from your machine without the pipeline — useful for initial testing or when iterating on infrastructure changes.
+
+```powershell
+Connect-AzAccount
+
+./infrastructure/aks_adversary_lab_deploy.ps1 `
+  -Location          "eastus" `
+  -AdminGroupObjectId "your-entra-group-object-id"
+
+# With Defender for Containers enabled
+./infrastructure/aks_adversary_lab_deploy.ps1 `
+  -Location          "eastus" `
+  -AdminGroupObjectId "your-entra-group-object-id" `
+  -EnableDefender    $true
+```
+
+After the script completes, apply K8s resources manually:
 
 ```bash
-# Token theft (T1528)
-kubectl exec -it peirates -n attacker -- /bin/sh
-# Then run: bash /path/to/attack-simulations/token-theft.sh
+kubectl apply -f kubernetes/namespaces/
+kubectl apply -f kubernetes/rbac/
+kubectl apply -f kubernetes/network-policies/
+kubectl apply -f kubernetes/monitoring/
+kubectl apply -f kubernetes/victim-apps/
+kubectl apply -f kubernetes/red-team/
 
-# Lateral movement (T1550.001)
-kubectl exec -it kubectl -n attacker -- /bin/sh
+helm repo add falcosecurity https://falcosecurity.github.io/charts
+helm upgrade --install falco falcosecurity/falco \
+  --namespace monitoring \
+  --create-namespace \
+  --values helm/falco-values.yaml
 ```
 
-### 5. Verify Detections
+---
+
+## Running Attack Simulations
+
+```bash
+# Token theft — T1528
+kubectl exec -it -n attacker \
+  $(kubectl get pod -n attacker -l app=peirates -o jsonpath='{.items[0].metadata.name}') \
+  -- /bin/sh
+
+# Inside the pod:
+bash /attack-simulations/token-theft.sh
+
+# Lateral movement — T1550.001
+kubectl exec -it -n attacker \
+  $(kubectl get pod -n attacker -l app=kubectl -o jsonpath='{.items[0].metadata.name}') \
+  -- /bin/sh
+```
+
+---
+
+## Verifying Detections
 
 ```kql
-// AKS Audit logs
-AKSAudit | where TimeGenerated > ago(1h) | summarize count() by bin(TimeGenerated, 5m)
+// AKS API server audit logs — confirm data is flowing
+AKSAudit
+| where TimeGenerated > ago(1h)
+| summarize count() by bin(TimeGenerated, 5m)
 
-// Container Insights
-ContainerLogV2 | where TimeGenerated > ago(1h) | summarize count() by PodNamespace
+// Container stdout/stderr
+ContainerLogV2
+| where TimeGenerated > ago(1h)
+| summarize count() by PodNamespace
 
 // Defender alerts (if enabled)
-SecurityAlert | where TimeGenerated > ago(24h) | where ProductName has "Defender" | take 10
+SecurityAlert
+| where TimeGenerated > ago(24h)
+| where ProductName has "Defender"
+| project TimeGenerated, AlertName, Description, Entities
 ```
 
-## Detection Content
+See [docs/KQL_Container_Reference.md](docs/KQL_Container_Reference.md) for the full query reference across all log tables.
 
-Detection rules live in `detections/` as standalone files — the source of truth for all detection logic.
+---
 
-| Folder | Format | Purpose |
-|--------|--------|---------|
-| `detections/kql/` | KQL | Microsoft Sentinel analytics rules |
-| `detections/falco/` | YAML | Falco runtime security rules |
-
-Falco rules in `detections/falco/` are assembled into `helm/falco-values.yaml` for deployment. The standalone files exist for version control, validation, and easier review in PRs.
-
-## Log Tables
+## Log Tables Reference
 
 | Table | Source | Key Detections |
-|-------|--------|---------------|
-| AKSAudit | API server (all ops) | exec, pod creation, secret access, RBAC changes |
-| AKSAuditAdmin | API server (mutations) | RBAC escalation, daemonset creation, deletions |
-| AKSControlPlane | guard, scheduler | auth failures, admission denials |
-| ContainerLogV2 | Container stdout/stderr | crypto mining, token access, reverse shells |
-| KubeEvents | Pod lifecycle | crash loops, image pull failures, OOMKills |
-| KubePodInventory | Pod metadata | namespace drift, unexpected images |
-| InsightsMetrics | CPU/memory/network | mining detection via CPU anomalies |
-| SecurityAlert | Defender | binary drift, web shells, escape attempts |
-| AzureActivity | ARM operations | resource deletions, policy changes |
+|---|---|---|
+| `AKSAudit` | API server (all ops) | exec, pod creation, secret access, RBAC changes |
+| `AKSAuditAdmin` | API server (mutations) | RBAC escalation, daemonset creation, deletions |
+| `AKSControlPlane` | guard, scheduler | auth failures, admission denials |
+| `ContainerLogV2` | Container stdout/stderr | crypto mining, token access, reverse shells |
+| `KubeEvents` | Pod lifecycle | crash loops, image pull failures, OOMKills |
+| `KubePodInventory` | Pod metadata | namespace drift, unexpected images |
+| `InsightsMetrics` | CPU/memory/network | mining detection via CPU anomalies |
+| `SecurityAlert` | Defender | binary drift, web shells, escape attempts |
+| `AzureActivity` | ARM operations | resource deletions, policy changes |
 
-## Cost Management
+---
 
-| Resource | Monthly Cost |
-|----------|-------------|
+## Cost Estimate
+
+Approximate monthly cost running 24/7:
+
+| Resource | Cost |
+|---|---|
 | AKS Standard tier (control plane) | ~$73 |
 | 1× D2s_v3 system node | ~$70 |
 | 1× D2s_v3 user node | ~$70 |
-| Log Analytics (90-day, ~5GB/day) | ~$35 |
+| Log Analytics (~5 GB/day, 90-day retention) | ~$35 |
 | ACR Standard | ~$5 |
-| **Total (running 24/7)** | **~$253/month** |
+| **Total** | **~$253/month** |
+
+For engagements or training sessions, deploy for the session and destroy when done — cost is negligible at a few hours.
 
 ```bash
-# Stop cluster when not in use
-az aks stop --resource-group <rg> --name <cluster>
-az aks start --resource-group <rg> --name <cluster>
+# Pause the cluster between sessions instead of destroying
+az aks stop  --resource-group rg-<prefix>-aks-lab --name <prefix>-aks
+az aks start --resource-group rg-<prefix>-aks-lab --name <prefix>-aks
 ```
 
-## Cleanup
+---
 
-```powershell
-Remove-AzResourceGroup -Name "aks-adversary-lab-<suffix>" -Force
+## Detection Content
 
-# Subscription-level policy cleanup
-Remove-AzPolicySetDefinition -Name 'aks-adversary-lab-logging-initiative' -Force -ErrorAction SilentlyContinue
-Remove-AzPolicyDefinition -Name 'aks-dine-all-diag-categories' -Force -ErrorAction SilentlyContinue
-Remove-AzPolicyDefinition -Name 'aks-require-network-policy' -Force -ErrorAction SilentlyContinue
-Remove-AzPolicyDefinition -Name 'aks-require-defender-sensor' -Force -ErrorAction SilentlyContinue
-Remove-AzPolicyDefinition -Name 'aks-require-entra-rbac' -Force -ErrorAction SilentlyContinue
-Remove-AzPolicyDefinition -Name 'kv-dine-diagnostic-settings' -Force -ErrorAction SilentlyContinue
-```
+Detection rules in `detections/` are the source of truth — version controlled, validated in CI, reviewed in PRs like code.
 
-## Contributing
+| Location | Format | Purpose |
+|---|---|---|
+| `detections/kql/` | `.kql` | Microsoft Sentinel analytics rules |
+| `detections/falco/` | `.yaml` | Falco runtime rules |
 
-See [docs/SECURITY.md](docs/SECURITY.md) for scanning policy and exception process.
+Falco rules are assembled from `detections/falco/` into `helm/falco-values.yaml` for deployment. The standalone files exist for validation, diffing, and easier review.
 
-Areas for enhancement:
-- Additional KQL detection rules in `detections/kql/`
-- Additional Falco rules in `detections/falco/`
-- Attack simulation scripts in `attack-simulations/`
-- Grafana dashboards
+---
 
 ## Additional Resources
 
 - [MITRE ATT&CK Containers Matrix](https://attack.mitre.org/matrices/enterprise/containers/)
-- [Microsoft Sentinel Documentation](https://docs.microsoft.com/en-us/azure/sentinel/)
-- [KQL Container Reference](docs/KQL_Container_Reference.md)
+- [Microsoft Sentinel Documentation](https://learn.microsoft.com/en-us/azure/sentinel/)
 - [Defender for Containers](https://learn.microsoft.com/en-us/azure/defender-for-cloud/defender-for-containers-introduction)
+- [Falco Documentation](https://falco.org/docs/)
+- [KQL Container Reference](docs/KQL_Container_Reference.md)
 
-> [!NOTE]
-> **Ready to start building detections?** Join [Adversary Lab Community](https://www.skool.com/adversary-lab-community/about)
+---
 
 ## License
 
 MIT License
-
-> ⚠️ **Disclaimer:** This project deploys intentionally vulnerable workloads and offensive tools. Deploy only in isolated subscriptions you control.
