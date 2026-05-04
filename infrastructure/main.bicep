@@ -160,7 +160,6 @@ module aksPolicy 'modules/aks_policy.bicep' = {
     initiativeId: aksPolicyDefs.outputs.initiativeId
     logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceResourceId
   }
-  dependsOn: [ aksPolicyDefs ]
 }
 
 // ── Outputs ─────────────────────────────────────────────────────────────────

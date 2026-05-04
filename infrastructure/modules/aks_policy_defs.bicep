@@ -50,10 +50,17 @@ resource dineDiagPolicy 'Microsoft.Authorization/policyDefinitions@2023-04-01' =
                       {
                         field: 'Microsoft.Insights/diagnosticSettings/logs[*].category'
                         in: [
-                          'kube-audit', 'kube-audit-admin', 'kube-apiserver',
-                          'kube-controller-manager', 'kube-scheduler', 'cluster-autoscaler',
-                          'cloud-controller-manager', 'guard', 'csi-azuredisk-controller',
-                          'csi-azurefile-controller', 'csi-snapshot-controller'
+                          'kube-audit'
+                          'kube-audit-admin'
+                          'kube-apiserver'
+                          'kube-controller-manager'
+                          'kube-scheduler'
+                          'cluster-autoscaler'
+                          'cloud-controller-manager'
+                          'guard'
+                          'csi-azuredisk-controller'
+                          'csi-azurefile-controller'
+                          'csi-snapshot-controller'
                         ]
                       }
                     ]
