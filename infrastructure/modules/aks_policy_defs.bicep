@@ -385,11 +385,31 @@ resource aksLoggingInitiative 'Microsoft.Authorization/policySetDefinitions@2023
       }
     ]
     policyDefinitionGroups: [
-      { name: 'Logging', displayName: 'Logging & Diagnostics' }
-      { name: 'Security', displayName: 'Security Controls' }
-      { name: 'PodSecurity', displayName: 'Pod Security Standards' }
-      { name: 'Network', displayName: 'Network Security' }
-      { name: 'Identity', displayName: 'Identity & Access' }
+      {
+        name: 'Logging'
+        displayName: 'Logging & Diagnostics'
+        description: 'Diagnostic settings and log collection policies'
+      }
+      {
+        name: 'Security'
+        displayName: 'Security Controls'
+        description: 'Runtime security monitoring policies'
+      }
+      {
+        name: 'PodSecurity'
+        displayName: 'Pod Security Standards'
+        description: 'Pod security admission policies'
+      }
+      {
+        name: 'Network'
+        displayName: 'Network Security'
+        description: 'Network segmentation and access policies'
+      }
+      {
+        name: 'Identity'
+        displayName: 'Identity & Access'
+        description: 'Entra ID integration and RBAC policies'
+      }
     ]
   }
 }
