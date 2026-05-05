@@ -56,7 +56,6 @@ jobs:
     name: Preflight checks
     runs-on: ubuntu-latest
     environment: lab
-    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -84,12 +83,15 @@ jobs:
         if: github.event.inputs.existing_workspace_id != ''
         run: |
           WS="${{ github.event.inputs.existing_workspace_id }}"
-          if [[ ! "$WS" =~ ^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.OperationalInsights/workspaces/[^/]+$ ]]; then
+          # Azure resource IDs are case-insensitive — match accordingly
+          shopt -s nocasematch
+          if [[ ! "$WS" =~ ^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\.operationalinsights/workspaces/[^/]+$ ]]; then
             echo "::error::existing_workspace_id is not a valid resource ID."
             echo "Expected: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}"
             echo "Got: $WS"
             exit 1
           fi
+          shopt -u nocasematch
           echo "✓ Existing workspace ID valid"
           echo "  Using workspace: $(echo $WS | awk -F'/' '{print $NF}')"
 
@@ -122,7 +124,6 @@ jobs:
     environment: lab
     needs: preflight
     if: github.event.inputs.action == 'deploy'
-    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -295,7 +296,6 @@ jobs:
     environment: lab
     needs: preflight
     if: github.event.inputs.action == 'destroy'
-    timeout-minutes: 20
 
     steps:
       - name: Checkout
