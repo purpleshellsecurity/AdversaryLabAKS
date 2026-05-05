@@ -4,33 +4,25 @@
 
 targetScope = 'subscription'
 
-@description('Azure region')
 param location string
-
-@description('Log Analytics Workspace Resource ID')
 param logAnalyticsWorkspaceId string
-
-@description('Enable Defender for Containers pricing tier')
 param enableDefenderForContainers bool = true
-
-@description('Enable Defender for Key Vault pricing tier')
 param enableDefenderForKeyVault bool = true
+
+@description('Forward subscription Activity Log to the workspace. Set false if a Sentinel solution already does this.')
+param enableActivityLogForwarding bool = false
 
 resource defenderContainers 'Microsoft.Security/pricings@2024-01-01' = if (enableDefenderForContainers) {
   name: 'Containers'
-  properties: {
-    pricingTier: 'Standard'
-  }
+  properties: { pricingTier: 'Standard' }
 }
 
 resource defenderKeyVault 'Microsoft.Security/pricings@2024-01-01' = if (enableDefenderForKeyVault) {
   name: 'KeyVaults'
-  properties: {
-    pricingTier: 'Standard'
-  }
+  properties: { pricingTier: 'Standard' }
 }
 
-resource activityLogDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+resource activityLogDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableActivityLogForwarding) {
   name: 'aks-lab-activity-to-law'
   properties: {
     workspaceId: logAnalyticsWorkspaceId
