@@ -3,8 +3,8 @@
 param location string
 param namePrefix string
 param kubernetesVersion string = '1.34.2'
-param systemNodeVmSize string = 'Standard_D2s_v3'
-param userNodeVmSize string = 'Standard_D2s_v3'
+param systemNodeVmSize string = 'Standard_D2s_v3'   // → 'Standard_D2s_v3' is fine for system
+param userNodeVmSize string = 'Standard_D4s_v3'     // → change to 'Standard_D4s_v3'
 param systemSubnetId string
 param userSubnetId string
 param logAnalyticsWorkspaceResourceId string

@@ -72,17 +72,14 @@ jobs:
         run: |
           IP="${{ github.event.inputs.authorized_ip }}"
 
-          # Shape: x.x.x.x/y
           if [[ ! "$IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
             echo "::error::authorized_ip must be in CIDR format (e.g. 73.45.123.45/32). Got: $IP"
             exit 1
           fi
 
-          # Strip CIDR suffix to inspect the address
           IP_NUM="${IP%/*}"
           IFS='.' read -r A B C D <<< "$IP_NUM"
 
-          # Reject octets > 255
           for OCT in "$A" "$B" "$C" "$D"; do
             if (( OCT > 255 )); then
               echo "::error::authorized_ip has invalid octet ($OCT > 255): $IP_NUM"
@@ -90,9 +87,6 @@ jobs:
             fi
           done
 
-          # Reject private (RFC 1918), loopback, link-local, and multicast.
-          # Azure rejects these on the AKS API server allowlist because the
-          # filter is enforced at the public load balancer.
           REJECT=""
           if (( A == 10 )); then
             REJECT="RFC 1918 private (10.0.0.0/8)"
@@ -255,7 +249,6 @@ jobs:
             --query "properties.provisioningState" -o tsv
           echo "✓ Subscription-scope resources deployed"
 
-      # ── Allowlist the runner's IP so kubectl steps can reach the API server ─
       - name: Allowlist runner IP on AKS API server
         id: runner_ip
         run: |
@@ -349,7 +342,6 @@ jobs:
           echo ""
           kubectl get pods -A --field-selector=status.phase=Running 2>/dev/null | head -30
 
-      # ── Cleanup: always restore the original allowlist ──────────────────────
       - name: Remove runner IP from AKS allowlist
         if: always() && steps.runner_ip.outputs.ip != ''
         run: |
@@ -385,6 +377,32 @@ jobs:
           if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
             WS_NAME=$(echo "${{ github.event.inputs.existing_workspace_id }}" | awk -F'/' '{print $NF}')
             echo "    ℹ️  Existing workspace '$WS_NAME' will NOT be deleted"
+          fi
+
+      # ── Delete cluster first to respect AKS node-RG deny assignment ─────────
+      # AKS auto-creates a node resource group with `restrictionLevel: 'ReadOnly'`,
+      # which adds a deny assignment that blocks deletion of node-RG resources by
+      # anyone other than AKS itself. Deleting the cluster first lets AKS dismantle
+      # the node RG cleanly. Skipping this causes az group delete to fail with:
+      #   DenyAssignmentAuthorizationFailed: kubernetes.azure.com/.../nrg-lockdown
+      - name: Delete AKS cluster (synchronous — triggers node RG cleanup)
+        run: |
+          # Find the cluster in the lab RG (handles cases where name_prefix
+          # differs across deploys, RG was partially created, etc.)
+          CLUSTER_NAME=$(az aks list \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "[0].name" -o tsv 2>/dev/null || echo "")
+
+          if [ -n "$CLUSTER_NAME" ] && [ "$CLUSTER_NAME" != "null" ]; then
+            echo "Deleting AKS cluster: $CLUSTER_NAME"
+            echo "(This also removes the auto-managed node RG via AKS — typically 5-10 min)"
+            az aks delete \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --name "$CLUSTER_NAME" \
+              --yes
+            echo "✓ Cluster deleted, node RG cleaned up by AKS"
+          else
+            echo "· No AKS cluster found in RG — skipping cluster delete"
           fi
 
       - name: Delete resource group
