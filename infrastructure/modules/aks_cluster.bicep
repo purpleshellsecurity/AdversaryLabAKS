@@ -104,7 +104,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2025-03-01' = {
     ]
     apiServerAccessProfile: {
       enablePrivateCluster: false
-      authorizedIPRanges: [ '${authorizedIpRange}/32' ]
+      authorizedIPRanges: [ authorizedIpRange ]
     }
     nodeResourceGroup: nodeResourceGroup
     nodeResourceGroupProfile: { restrictionLevel: 'ReadOnly' }

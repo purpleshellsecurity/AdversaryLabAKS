@@ -58,9 +58,8 @@ param tags object = {
 }
 
 // ── Workspace resolution ────────────────────────────────────────────────────
-// Supports both new workspace creation and existing workspace reuse.
-// All downstream modules reference resolvedWorkspaceId / resolvedWorkspaceName
-// so the rest of the template is unaware of which path was taken.
+// Supports both new workspace creation and existing workspace reuse,
+// including cross-resource-group and cross-subscription scenarios.
 //
 // Resource ID format:
 //   /subscriptions/{sub}/resourceGroups/{rg}/providers/
@@ -70,11 +69,24 @@ var useExistingWorkspace = existingWorkspaceResourceId != ''
 
 var resolvedWorkspaceId = useExistingWorkspace
   ? existingWorkspaceResourceId
-  : logAnalytics.outputs.workspaceResourceId
+  : logAnalytics!.outputs.workspaceResourceId
 
 var resolvedWorkspaceName = useExistingWorkspace
   ? last(split(existingWorkspaceResourceId, '/'))
-  : logAnalytics.outputs.workspaceName
+  : logAnalytics!.outputs.workspaceName
+
+// Parse workspace location for cross-RG/cross-sub scoping.
+// When using an existing workspace, parse from the input ID directly
+// (calculable at graph-build time — no dependency on deployed outputs).
+// When creating a new workspace, it lives in the current deployment's RG.
+
+var workspaceSubscriptionId = useExistingWorkspace
+  ? split(existingWorkspaceResourceId, '/')[2]
+  : subscription().subscriptionId
+
+var workspaceResourceGroup = useExistingWorkspace
+  ? split(existingWorkspaceResourceId, '/')[4]
+  : resourceGroup().name
 
 // ── Layer 1: Foundation ─────────────────────────────────────────────────────
 
@@ -166,20 +178,28 @@ module containerInsights 'modules/container_insights.bicep' = {
   }
 }
 
+// Sentinel onboarding and content packages must run in the workspace's
+// resource group, not the lab's. The 'scope' parameter handles this for
+// both same-RG and cross-RG workspaces.
 module sentinel 'modules/aks_sentinel.bicep' = if (enableSentinelSolutions) {
   name: 'deploy-aks-sentinel'
+  scope: resourceGroup(workspaceSubscriptionId, workspaceResourceGroup)
   params: {
     workspaceName: resolvedWorkspaceName
   }
 }
 
+// ── Layer 3.5: Detection Content ────────────────────────────────────────────
+// Detection content also targets the workspace, so scoped to the workspace's RG.
+
 module detectionT1098006 '../detections/T1098.006-cluster-role-binding/rule.bicep' = if (enableSentinelSolutions) {
   name: 'deploy-detection-T1098-006'
+  scope: resourceGroup(workspaceSubscriptionId, workspaceResourceGroup)
   params: {
     workspaceName: resolvedWorkspaceName
   }
   dependsOn: [
-    sentinel  // Sentinel must be onboarded before analytics rules can deploy
+    sentinel
   ]
 }
 
