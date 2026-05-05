@@ -134,6 +134,13 @@ jobs:
       - name: Install Bicep
         run: az bicep install
 
+      - name: Install kubectl + kubelogin
+        run: |
+          az aks install-cli
+          kubectl version --client
+          kubelogin --version
+          echo "✓ kubectl and kubelogin installed"
+
       - name: Workspace mode
         run: |
           if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
@@ -216,6 +223,12 @@ jobs:
             --resource-group "${{ env.RESOURCE_GROUP }}" \
             --name "${{ steps.bicep.outputs.cluster_name }}" \
             --overwrite-existing
+
+          # Convert kubeconfig to use the Azure CLI token (non-interactive auth)
+          # — required because the cluster has Entra RBAC + disableLocalAccounts.
+          # Without this, kubectl tries device-code flow and fails in CI.
+          kubelogin convert-kubeconfig -l azurecli
+
           kubectl cluster-info
           echo "✓ kubectl configured"
 
@@ -276,6 +289,7 @@ jobs:
           echo ""
           echo "  Connect:"
           echo "  az aks get-credentials --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ steps.bicep.outputs.cluster_name }}"
+          echo "  kubelogin convert-kubeconfig -l azurecli"
           echo ""
           kubectl get pods -A --field-selector=status.phase=Running 2>/dev/null | head -30
 
