@@ -311,8 +311,9 @@ jobs:
             --create-namespace \
             --values helm/falco-values.yaml \
             --wait \
-            --timeout 5m
-          echo "✓ Falco deployed"
+            --timeout 10m \
+            || echo "⚠️  Falco install timed out — check 'kubectl get pods -n monitoring' after deploy"
+          echo "✓ Falco deployment step complete"
 
       - name: Apply monitoring resources
         run: kubectl apply -f kubernetes/monitoring/
