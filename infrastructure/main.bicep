@@ -173,6 +173,16 @@ module sentinel 'modules/aks_sentinel.bicep' = if (enableSentinelSolutions) {
   }
 }
 
+module detectionT1098006 '../detections/T1098.006-cluster-role-binding/rule.bicep' = if (enableSentinelSolutions) {
+  name: 'deploy-detection-T1098-006'
+  params: {
+    workspaceName: resolvedWorkspaceName
+  }
+  dependsOn: [
+    sentinel  // Sentinel must be onboarded before analytics rules can deploy
+  ]
+}
+
 // ── Layer 4: Governance ─────────────────────────────────────────────────────
 
 module aksPolicyDefs 'modules/aks_policy_defs.bicep' = {

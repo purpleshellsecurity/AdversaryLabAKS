@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  # GitHub Actions — keeps action versions current (actions/checkout, azure/login, etc.)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Python — keeps tools/detection-validator dependencies current
+  - package-ecosystem: pip
+    directory: /tools/detection-validator
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "chore(deps)"

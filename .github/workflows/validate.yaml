@@ -15,6 +15,7 @@ jobs:
 
   bicep-validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -40,6 +41,7 @@ jobs:
 
   powershell-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -80,6 +82,7 @@ jobs:
 
   secret-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -95,6 +98,7 @@ jobs:
 
   k8s-validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -118,6 +122,7 @@ jobs:
 
   helm-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -137,6 +142,7 @@ jobs:
 
   detection-validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -159,6 +165,7 @@ jobs:
 
   python-sast:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -182,6 +189,7 @@ jobs:
 
   iac-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: bicep-validate
 
     steps:
@@ -199,6 +207,7 @@ jobs:
 
   trivy-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: k8s-validate
 
     steps:

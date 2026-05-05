@@ -1,0 +1,32 @@
+// ============================================================================
+// Detection: ClusterRoleBinding / RoleBinding Creation by Non-System Principal
+// MITRE ATT&CK: T1098.006 - Additional Container Cluster Roles
+// Source: AKSAudit
+// ============================================================================
+//
+// Logic: RBAC binding creation outside CI/CD or system controllers is rare and
+// almost always suspicious. In a production cluster you'd add Argo/Flux/Helm
+// controllers to the exclusion list — for the lab, only K8s system controllers
+// are excluded.
+
+AKSAudit
+| where TimeGenerated > ago(1h)
+| where Stage == "ResponseComplete"
+| where Verb in ("create", "update", "patch")
+| extend
+    Username     = tostring(User.username),
+    Resource     = tostring(ObjectRef.resource),
+    Namespace    = tostring(ObjectRef.namespace),
+    BindingName  = tostring(ObjectRef.name),
+    ResponseCode = toint(ResponseStatus.code),
+    SourceIp     = tostring(SourceIps[0])
+| where Resource in ("clusterrolebindings", "rolebindings")
+| where ResponseCode between (200 .. 299)
+// Exclude stable system actors
+| where not(Username startswith "system:serviceaccount:kube-system:")
+| where not(Username startswith "system:node:")
+| where Username != "system:kube-controller-manager"
+| project
+    TimeGenerated, Username, Verb, Resource, BindingName, Namespace,
+    SourceIp, UserAgent
+| extend MitreTechnique = "T1098.006"

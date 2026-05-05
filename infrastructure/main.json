@@ -1,0 +1,2643 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "10459298561886947235"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources"
+      }
+    },
+    "namePrefix": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 15,
+      "metadata": {
+        "description": "Name prefix for all resources (lowercase, no special chars)"
+      }
+    },
+    "adminGroupObjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra ID group Object ID for AKS cluster-admin access"
+      }
+    },
+    "authorizedIpRange": {
+      "type": "string",
+      "metadata": {
+        "description": "Your public IP address for API server authorized access"
+      }
+    },
+    "logRetentionDays": {
+      "type": "int",
+      "defaultValue": 90,
+      "minValue": 30,
+      "maxValue": 730,
+      "metadata": {
+        "description": "Log Analytics retention in days — ignored when existingWorkspaceResourceId is provided"
+      }
+    },
+    "existingWorkspaceResourceId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional: Resource ID of an existing Log Analytics workspace.\nLeave empty to create a new workspace.\nFormat: /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}\n"
+      }
+    },
+    "kubernetesVersion": {
+      "type": "string",
+      "defaultValue": "1.34.2",
+      "metadata": {
+        "description": "Kubernetes version"
+      }
+    },
+    "systemNodeVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2s_v3",
+      "metadata": {
+        "description": "AKS system node pool VM size"
+      }
+    },
+    "userNodeVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2s_v3",
+      "metadata": {
+        "description": "AKS user (workload) node pool VM size"
+      }
+    },
+    "enableDefender": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Enable Microsoft Defender for Containers"
+      }
+    },
+    "enableAzurePolicy": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Enable Azure Policy add-on for AKS"
+      }
+    },
+    "enableSentinelSolutions": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Deploy Sentinel solutions for AKS/Container monitoring"
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "Environment": "SecurityLab",
+        "Project": "AKS-Adversary-Lab",
+        "Purpose": "MITRE-ATT&CK-Containers",
+        "ManagedBy": "Bicep"
+      },
+      "metadata": {
+        "description": "Tags applied to all resources"
+      }
+    }
+  },
+  "variables": {
+    "useExistingWorkspace": "[not(equals(parameters('existingWorkspaceResourceId'), ''))]"
+  },
+  "resources": [
+    {
+      "condition": "[not(variables('useExistingWorkspace'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-log-analytics",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "retentionInDays": {
+            "value": "[parameters('logRetentionDays')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "16651151183788007773"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "namePrefix": {
+              "type": "string"
+            },
+            "retentionInDays": {
+              "type": "int",
+              "defaultValue": 90
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "variables": {
+            "workspaceName": "[format('{0}-aks-law', parameters('namePrefix'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2023-09-01",
+              "name": "[variables('workspaceName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": "[parameters('retentionInDays')]",
+                "features": {
+                  "enableLogAccessUsingOnlyResourcePermissions": true,
+                  "disableLocalAuth": false
+                },
+                "workspaceCapping": {
+                  "dailyQuotaGb": -1
+                },
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled"
+              }
+            }
+          ],
+          "outputs": {
+            "workspaceName": {
+              "type": "string",
+              "value": "[variables('workspaceName')]"
+            },
+            "workspaceId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2023-09-01').customerId]"
+            },
+            "workspaceResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-aks-networking",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "15394167866675876688"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "namePrefix": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            },
+            "vnetAddressPrefix": {
+              "type": "string",
+              "defaultValue": "10.0.0.0/16"
+            },
+            "systemSubnetPrefix": {
+              "type": "string",
+              "defaultValue": "10.0.0.0/23"
+            },
+            "userSubnetPrefix": {
+              "type": "string",
+              "defaultValue": "10.0.2.0/23"
+            },
+            "endpointsSubnetPrefix": {
+              "type": "string",
+              "defaultValue": "10.0.5.0/24"
+            }
+          },
+          "variables": {
+            "vnetName": "[format('{0}-aks-vnet', parameters('namePrefix'))]",
+            "systemSubnetName": "sn-aks-system",
+            "userSubnetName": "sn-aks-user",
+            "endpointsSubnetName": "sn-endpoints",
+            "nsgSystemName": "[format('{0}-nsg-aks-system', parameters('namePrefix'))]",
+            "nsgUserName": "[format('{0}-nsg-aks-user', parameters('namePrefix'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2024-01-01",
+              "name": "[variables('nsgSystemName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "securityRules": [
+                  {
+                    "name": "DenyAllInbound",
+                    "properties": {
+                      "priority": 4000,
+                      "protocol": "*",
+                      "access": "Deny",
+                      "direction": "Inbound",
+                      "sourceAddressPrefix": "Internet",
+                      "sourcePortRange": "*",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "*",
+                      "description": "Default deny all internet inbound"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2024-01-01",
+              "name": "[variables('nsgUserName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "securityRules": [
+                  {
+                    "name": "AllowHTTPSInbound",
+                    "properties": {
+                      "priority": 1000,
+                      "protocol": "Tcp",
+                      "access": "Allow",
+                      "direction": "Inbound",
+                      "sourceAddressPrefix": "*",
+                      "sourcePortRange": "*",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "443",
+                      "description": "Allow HTTPS for ingress controller testing"
+                    }
+                  },
+                  {
+                    "name": "AllowHTTPInbound",
+                    "properties": {
+                      "priority": 1010,
+                      "protocol": "Tcp",
+                      "access": "Allow",
+                      "direction": "Inbound",
+                      "sourceAddressPrefix": "*",
+                      "sourcePortRange": "*",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "80",
+                      "description": "Allow HTTP for victim app testing"
+                    }
+                  },
+                  {
+                    "name": "DenyAllOtherInbound",
+                    "properties": {
+                      "priority": 4000,
+                      "protocol": "*",
+                      "access": "Deny",
+                      "direction": "Inbound",
+                      "sourceAddressPrefix": "Internet",
+                      "sourcePortRange": "*",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "*"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2024-01-01",
+              "name": "[variables('vnetName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "[parameters('vnetAddressPrefix')]"
+                  ]
+                },
+                "subnets": [
+                  {
+                    "name": "[variables('systemSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "[parameters('systemSubnetPrefix')]",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgSystemName'))]"
+                      },
+                      "privateEndpointNetworkPolicies": "Disabled"
+                    }
+                  },
+                  {
+                    "name": "[variables('userSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "[parameters('userSubnetPrefix')]",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgUserName'))]"
+                      },
+                      "privateEndpointNetworkPolicies": "Disabled"
+                    }
+                  },
+                  {
+                    "name": "[variables('endpointsSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "[parameters('endpointsSubnetPrefix')]",
+                      "privateEndpointNetworkPolicies": "Enabled"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgSystemName'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgUserName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "vnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+            },
+            "vnetName": {
+              "type": "string",
+              "value": "[variables('vnetName')]"
+            },
+            "systemSubnetId": {
+              "type": "string",
+              "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), variables('systemSubnetName'))]"
+            },
+            "userSubnetId": {
+              "type": "string",
+              "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), variables('userSubnetName'))]"
+            },
+            "endpointsSubnetId": {
+              "type": "string",
+              "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), variables('endpointsSubnetName'))]"
+            },
+            "nsgSystemId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgSystemName'))]"
+            },
+            "nsgUserId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgUserName'))]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-acr",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "logAnalyticsWorkspaceId": "[if(variables('useExistingWorkspace'), createObject('value', parameters('existingWorkspaceResourceId')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceResourceId.value))]",
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "10416041571042068539"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "namePrefix": {
+              "type": "string"
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "variables": {
+            "acrName": "[format('{0}acr{1}', toLower(replace(parameters('namePrefix'), '-', '')), substring(uniqueString(resourceGroup().id), 0, 6))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2023-11-01-preview",
+              "name": "[variables('acrName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "adminUserEnabled": false,
+                "publicNetworkAccess": "Enabled",
+                "encryption": {
+                  "status": "disabled"
+                },
+                "dataEndpointEnabled": false
+              }
+            },
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
+              "name": "acr-to-law",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsWorkspaceId')]",
+                "logs": [
+                  {
+                    "categoryGroup": "allLogs",
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "acrName": {
+              "type": "string",
+              "value": "[variables('acrName')]"
+            },
+            "acrResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]"
+            },
+            "acrLoginServer": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-11-01-preview').loginServer]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-keyvault",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "logAnalyticsWorkspaceId": "[if(variables('useExistingWorkspace'), createObject('value', parameters('existingWorkspaceResourceId')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceResourceId.value))]",
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "8624898928476408277"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "namePrefix": {
+              "type": "string"
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "variables": {
+            "keyVaultName": "[format('kv{0}{1}', toLower(replace(parameters('namePrefix'), '-', '')), substring(uniqueString(resourceGroup().id), 0, 4))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2023-07-01",
+              "name": "[variables('keyVaultName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "tenantId": "[subscription().tenantId]",
+                "enableRbacAuthorization": true,
+                "enableSoftDelete": true,
+                "softDeleteRetentionInDays": 7,
+                "publicNetworkAccess": "Enabled",
+                "networkAcls": {
+                  "defaultAction": "Allow",
+                  "bypass": "AzureServices"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+              "name": "kv-to-law",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsWorkspaceId')]",
+                "logs": [
+                  {
+                    "categoryGroup": "allLogs",
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "keyVaultName": {
+              "type": "string",
+              "value": "[variables('keyVaultName')]"
+            },
+            "keyVaultResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+            },
+            "keyVaultUri": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-aks-cluster",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "kubernetesVersion": {
+            "value": "[parameters('kubernetesVersion')]"
+          },
+          "systemNodeVmSize": {
+            "value": "[parameters('systemNodeVmSize')]"
+          },
+          "userNodeVmSize": {
+            "value": "[parameters('userNodeVmSize')]"
+          },
+          "systemSubnetId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-networking'), '2025-04-01').outputs.systemSubnetId.value]"
+          },
+          "userSubnetId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-networking'), '2025-04-01').outputs.userSubnetId.value]"
+          },
+          "logAnalyticsWorkspaceResourceId": "[if(variables('useExistingWorkspace'), createObject('value', parameters('existingWorkspaceResourceId')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceResourceId.value))]",
+          "adminGroupObjectId": {
+            "value": "[parameters('adminGroupObjectId')]"
+          },
+          "authorizedIpRange": {
+            "value": "[parameters('authorizedIpRange')]"
+          },
+          "enableDefender": {
+            "value": "[parameters('enableDefender')]"
+          },
+          "enableAzurePolicy": {
+            "value": "[parameters('enableAzurePolicy')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "13671446375307178652"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "namePrefix": {
+              "type": "string"
+            },
+            "kubernetesVersion": {
+              "type": "string",
+              "defaultValue": "1.34.2"
+            },
+            "systemNodeVmSize": {
+              "type": "string",
+              "defaultValue": "Standard_D2s_v3"
+            },
+            "userNodeVmSize": {
+              "type": "string",
+              "defaultValue": "Standard_D2s_v3"
+            },
+            "systemSubnetId": {
+              "type": "string"
+            },
+            "userSubnetId": {
+              "type": "string"
+            },
+            "logAnalyticsWorkspaceResourceId": {
+              "type": "string"
+            },
+            "adminGroupObjectId": {
+              "type": "string"
+            },
+            "authorizedIpRange": {
+              "type": "string"
+            },
+            "enableDefender": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "enableAzurePolicy": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "variables": {
+            "clusterName": "[format('{0}-aks', parameters('namePrefix'))]",
+            "nodeResourceGroup": "[format('{0}-aks-nodes', parameters('namePrefix'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ContainerService/managedClusters",
+              "apiVersion": "2025-03-01",
+              "name": "[variables('clusterName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Base",
+                "tier": "Standard"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "kubernetesVersion": "[parameters('kubernetesVersion')]",
+                "dnsPrefix": "[format('{0}-dns', variables('clusterName'))]",
+                "enableRBAC": true,
+                "disableLocalAccounts": true,
+                "aadProfile": {
+                  "managed": true,
+                  "enableAzureRBAC": true,
+                  "adminGroupObjectIDs": [
+                    "[parameters('adminGroupObjectId')]"
+                  ]
+                },
+                "networkProfile": {
+                  "networkPlugin": "azure",
+                  "networkPluginMode": "overlay",
+                  "networkDataplane": "cilium",
+                  "networkPolicy": "cilium",
+                  "podCidr": "10.244.0.0/16",
+                  "serviceCidr": "10.245.0.0/16",
+                  "dnsServiceIP": "10.245.0.10",
+                  "loadBalancerSku": "standard",
+                  "outboundType": "loadBalancer",
+                  "loadBalancerProfile": {
+                    "managedOutboundIPs": {
+                      "count": 1
+                    }
+                  }
+                },
+                "securityProfile": {
+                  "workloadIdentity": {
+                    "enabled": true
+                  },
+                  "defender": "[if(parameters('enableDefender'), createObject('logAnalyticsWorkspaceResourceId', parameters('logAnalyticsWorkspaceResourceId'), 'securityMonitoring', createObject('enabled', true())), null())]",
+                  "imageCleaner": {
+                    "enabled": true,
+                    "intervalHours": 48
+                  }
+                },
+                "oidcIssuerProfile": {
+                  "enabled": true
+                },
+                "addonProfiles": {
+                  "azurepolicy": {
+                    "enabled": "[parameters('enableAzurePolicy')]"
+                  },
+                  "azureKeyvaultSecretsProvider": {
+                    "enabled": true,
+                    "config": {
+                      "enableSecretRotation": "true",
+                      "rotationPollInterval": "2m"
+                    }
+                  },
+                  "omsagent": {
+                    "enabled": true,
+                    "config": {
+                      "logAnalyticsWorkspaceResourceID": "[parameters('logAnalyticsWorkspaceResourceId')]",
+                      "useAADAuth": "true"
+                    }
+                  }
+                },
+                "azureMonitorProfile": {
+                  "metrics": {
+                    "enabled": true
+                  }
+                },
+                "agentPoolProfiles": [
+                  {
+                    "name": "system",
+                    "count": 1,
+                    "vmSize": "[parameters('systemNodeVmSize')]",
+                    "mode": "System",
+                    "osType": "Linux",
+                    "osSKU": "AzureLinux",
+                    "vnetSubnetID": "[parameters('systemSubnetId')]",
+                    "enableAutoScaling": true,
+                    "minCount": 1,
+                    "maxCount": 3,
+                    "maxPods": 110,
+                    "nodeTaints": [
+                      "CriticalAddonsOnly=true:NoSchedule"
+                    ],
+                    "nodeLabels": {
+                      "adversary-lab/pool": "system"
+                    },
+                    "upgradeSettings": {
+                      "maxSurge": "33%"
+                    }
+                  },
+                  {
+                    "name": "seclab",
+                    "count": 1,
+                    "vmSize": "[parameters('userNodeVmSize')]",
+                    "mode": "User",
+                    "osType": "Linux",
+                    "osSKU": "AzureLinux",
+                    "vnetSubnetID": "[parameters('userSubnetId')]",
+                    "enableAutoScaling": true,
+                    "minCount": 1,
+                    "maxCount": 6,
+                    "maxPods": 110,
+                    "nodeLabels": {
+                      "adversary-lab/pool": "workload"
+                    },
+                    "upgradeSettings": {
+                      "maxSurge": "33%"
+                    }
+                  }
+                ],
+                "apiServerAccessProfile": {
+                  "enablePrivateCluster": false,
+                  "authorizedIPRanges": [
+                    "[format('{0}/32', parameters('authorizedIpRange'))]"
+                  ]
+                },
+                "nodeResourceGroup": "[variables('nodeResourceGroup')]",
+                "nodeResourceGroupProfile": {
+                  "restrictionLevel": "ReadOnly"
+                },
+                "autoUpgradeProfile": {
+                  "upgradeChannel": "stable",
+                  "nodeOSUpgradeChannel": "NodeImage"
+                },
+                "storageProfile": {
+                  "diskCSIDriver": {
+                    "enabled": true
+                  },
+                  "fileCSIDriver": {
+                    "enabled": true
+                  },
+                  "snapshotController": {
+                    "enabled": true
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "clusterName": {
+              "type": "string",
+              "value": "[variables('clusterName')]"
+            },
+            "clusterResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ContainerService/managedClusters', variables('clusterName'))]"
+            },
+            "clusterFqdn": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('clusterName')), '2025-03-01').fqdn]"
+            },
+            "kubeletIdentityObjectId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('clusterName')), '2025-03-01').identityProfile.kubeletidentity.objectId]"
+            },
+            "clusterPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('clusterName')), '2025-03-01', 'full').identity.principalId]"
+            },
+            "oidcIssuerUrl": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('clusterName')), '2025-03-01').oidcIssuerProfile.issuerURL]"
+            },
+            "nodeResourceGroup": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('clusterName')), '2025-03-01').nodeResourceGroup]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]",
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-aks-networking')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-acr-role",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "acrName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-acr'), '2025-04-01').outputs.acrName.value]"
+          },
+          "aksPrincipalId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster'), '2025-04-01').outputs.kubeletIdentityObjectId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "5558462982884573645"
+            }
+          },
+          "parameters": {
+            "acrName": {
+              "type": "string"
+            },
+            "aksPrincipalId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "acrPullRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
+              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), parameters('aksPrincipalId'), variables('acrPullRoleId'))]",
+              "properties": {
+                "principalId": "[parameters('aksPrincipalId')]",
+                "roleDefinitionId": "[variables('acrPullRoleId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ],
+          "outputs": {
+            "roleAssignmentId": {
+              "type": "string",
+              "value": "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), parameters('aksPrincipalId'), variables('acrPullRoleId')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-acr')]",
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-aks-diagnostics",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "aksClusterName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster'), '2025-04-01').outputs.clusterName.value]"
+          },
+          "logAnalyticsWorkspaceId": "[if(variables('useExistingWorkspace'), createObject('value', parameters('existingWorkspaceResourceId')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceResourceId.value))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "7143917660012135787"
+            }
+          },
+          "parameters": {
+            "aksClusterName": {
+              "type": "string"
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.ContainerService/managedClusters', parameters('aksClusterName'))]",
+              "name": "[format('{0}-full-security-diag', parameters('aksClusterName'))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsWorkspaceId')]",
+                "logAnalyticsDestinationType": "Dedicated",
+                "logs": [
+                  {
+                    "category": "kube-audit",
+                    "enabled": true
+                  },
+                  {
+                    "category": "kube-audit-admin",
+                    "enabled": true
+                  },
+                  {
+                    "category": "kube-apiserver",
+                    "enabled": true
+                  },
+                  {
+                    "category": "kube-controller-manager",
+                    "enabled": true
+                  },
+                  {
+                    "category": "kube-scheduler",
+                    "enabled": true
+                  },
+                  {
+                    "category": "cluster-autoscaler",
+                    "enabled": true
+                  },
+                  {
+                    "category": "cloud-controller-manager",
+                    "enabled": true
+                  },
+                  {
+                    "category": "guard",
+                    "enabled": true
+                  },
+                  {
+                    "category": "csi-azuredisk-controller",
+                    "enabled": true
+                  },
+                  {
+                    "category": "csi-azurefile-controller",
+                    "enabled": true
+                  },
+                  {
+                    "category": "csi-snapshot-controller",
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+          ],
+          "outputs": {
+            "diagnosticSettingsName": {
+              "type": "string",
+              "value": "[format('{0}-full-security-diag', parameters('aksClusterName'))]"
+            },
+            "diagnosticSettingsId": {
+              "type": "string",
+              "value": "[extensionResourceId(resourceId('Microsoft.ContainerService/managedClusters', parameters('aksClusterName')), 'Microsoft.Insights/diagnosticSettings', format('{0}-full-security-diag', parameters('aksClusterName')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster')]",
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-container-insights",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "namePrefix": {
+            "value": "[parameters('namePrefix')]"
+          },
+          "aksClusterName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster'), '2025-04-01').outputs.clusterName.value]"
+          },
+          "logAnalyticsWorkspaceResourceId": "[if(variables('useExistingWorkspace'), createObject('value', parameters('existingWorkspaceResourceId')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceResourceId.value))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "1812546203929998028"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "namePrefix": {
+              "type": "string"
+            },
+            "aksClusterName": {
+              "type": "string"
+            },
+            "logAnalyticsWorkspaceResourceId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "dcrName": "[format('{0}-aks-ci-dcr', parameters('namePrefix'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Insights/dataCollectionRules",
+              "apiVersion": "2023-03-11",
+              "name": "[variables('dcrName')]",
+              "location": "[parameters('location')]",
+              "kind": "Linux",
+              "properties": {
+                "dataSources": {
+                  "extensions": [
+                    {
+                      "name": "ContainerInsightsExtension",
+                      "extensionName": "ContainerInsights",
+                      "streams": [
+                        "Microsoft-ContainerLogV2",
+                        "Microsoft-KubeEvents",
+                        "Microsoft-KubePodInventory",
+                        "Microsoft-KubeNodeInventory",
+                        "Microsoft-KubeServices",
+                        "Microsoft-KubeMonAgentEvents",
+                        "Microsoft-InsightsMetrics",
+                        "Microsoft-ContainerInventory",
+                        "Microsoft-ContainerNodeInventory",
+                        "Microsoft-Perf"
+                      ],
+                      "extensionSettings": {
+                        "dataCollectionSettings": {
+                          "interval": "1m",
+                          "namespaceFilteringMode": "Off",
+                          "enableContainerLogV2": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                "destinations": {
+                  "logAnalytics": [
+                    {
+                      "workspaceResourceId": "[parameters('logAnalyticsWorkspaceResourceId')]",
+                      "name": "ciworkspace"
+                    }
+                  ]
+                },
+                "dataFlows": [
+                  {
+                    "streams": [
+                      "Microsoft-ContainerLogV2",
+                      "Microsoft-KubeEvents",
+                      "Microsoft-KubePodInventory",
+                      "Microsoft-KubeNodeInventory",
+                      "Microsoft-KubeServices",
+                      "Microsoft-KubeMonAgentEvents",
+                      "Microsoft-InsightsMetrics",
+                      "Microsoft-ContainerInventory",
+                      "Microsoft-ContainerNodeInventory",
+                      "Microsoft-Perf"
+                    ],
+                    "destinations": [
+                      "ciworkspace"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Insights/dataCollectionRuleAssociations",
+              "apiVersion": "2023-03-11",
+              "scope": "[resourceId('Microsoft.ContainerService/managedClusters', parameters('aksClusterName'))]",
+              "name": "ContainerInsightsExtension",
+              "properties": {
+                "dataCollectionRuleId": "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]",
+                "description": "Container Insights DCR association for AKS adversary lab"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "dcrId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]"
+            },
+            "dcrName": {
+              "type": "string",
+              "value": "[variables('dcrName')]"
+            },
+            "dcrAssociationId": {
+              "type": "string",
+              "value": "[extensionResourceId(resourceId('Microsoft.ContainerService/managedClusters', parameters('aksClusterName')), 'Microsoft.Insights/dataCollectionRuleAssociations', 'ContainerInsightsExtension')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster')]",
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]"
+      ]
+    },
+    {
+      "condition": "[parameters('enableSentinelSolutions')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-aks-sentinel",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": "[if(variables('useExistingWorkspace'), createObject('value', last(split(parameters('existingWorkspaceResourceId'), '/'))), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceName.value))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "8066238020312756818"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.SecurityInsights/onboardingStates",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "default",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.SecurityInsights/contentPackages",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "azuresentinel.azure-sentinel-solution-azureactivity",
+              "properties": {
+                "version": "3.0.3",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "azuresentinel.azure-sentinel-solution-azureactivity",
+                "contentProductId": "azuresentinel.azure-sentinel-solution-azureactivit-sl-x6rxfrmsjp3pw",
+                "contentKind": "Solution",
+                "displayName": "Azure Activity",
+                "source": {
+                  "kind": "Solution",
+                  "name": "Azure Activity",
+                  "sourceId": "azuresentinel.azure-sentinel-solution-azureactivity"
+                }
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/onboardingStates', 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.SecurityInsights/contentPackages",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "azuresentinel.azure-sentinel-solution-azureactivedirectory",
+              "properties": {
+                "version": "3.3.3",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "azuresentinel.azure-sentinel-solution-azureactivedirectory",
+                "contentProductId": "azuresentinel.azure-sentinel-solution-azureactived-sl-ysutelafuvsa2",
+                "contentKind": "Solution",
+                "displayName": "Microsoft Entra ID",
+                "source": {
+                  "kind": "Solution",
+                  "name": "Microsoft Entra ID",
+                  "sourceId": "azuresentinel.azure-sentinel-solution-azureactivedirectory"
+                }
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/onboardingStates', 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.SecurityInsights/contentPackages",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "azuresentinel.azure-sentinel-solution-azurekeyvault",
+              "properties": {
+                "version": "3.0.2",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "azuresentinel.azure-sentinel-solution-azurekeyvault",
+                "contentProductId": "azuresentinel.azure-sentinel-solution-azurekeyvaul-sl-3m323kndkg22c",
+                "contentKind": "Solution",
+                "displayName": "Azure Key Vault",
+                "source": {
+                  "kind": "Solution",
+                  "name": "Azure Key Vault",
+                  "sourceId": "azuresentinel.azure-sentinel-solution-azurekeyvault"
+                }
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/onboardingStates', 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.SecurityInsights/contentPackages",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "azuresentinel.azure-sentinel-solution-networksecuritygroup",
+              "properties": {
+                "version": "2.0.2",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "azuresentinel.azure-sentinel-solution-networksecuritygroup",
+                "contentProductId": "azuresentinel.azure-sentinel-solution-networksecur-sl-bdnl6w63teo7m",
+                "contentKind": "Solution",
+                "displayName": "Azure Network Security Groups",
+                "source": {
+                  "kind": "Solution",
+                  "name": "Azure Network Security Groups",
+                  "sourceId": "azuresentinel.azure-sentinel-solution-networksecuritygroup"
+                }
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/onboardingStates', 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.SecurityInsights/contentPackages",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "azuresentinel.azure-sentinel-solution-azuresecuritybenchmark",
+              "properties": {
+                "version": "3.0.2",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "azuresentinel.azure-sentinel-solution-azuresecuritybenchmark",
+                "contentProductId": "azuresentinel.azure-sentinel-solution-azuresecurit-sl-cbis4wtefs3lm",
+                "contentKind": "Solution",
+                "displayName": "Azure Security Benchmark",
+                "source": {
+                  "kind": "Solution",
+                  "name": "AzureSecurityBenchmark",
+                  "sourceId": "azuresentinel.azure-sentinel-solution-azuresecuritybenchmark"
+                }
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/onboardingStates', 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.SecurityInsights/contentPackages",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "azuresentinel.azure-sentinel-solution-microsoftdefenderforcloud",
+              "properties": {
+                "version": "3.0.3",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "azuresentinel.azure-sentinel-solution-microsoftdefenderforcloud",
+                "contentProductId": "azuresentinel.azure-sentinel-solution-microsoftdefe-sl-lmxphhfyonlti",
+                "contentKind": "Solution",
+                "displayName": "Microsoft Defender for Cloud",
+                "source": {
+                  "kind": "Solution",
+                  "name": "Microsoft Defender for Cloud",
+                  "sourceId": "azuresentinel.azure-sentinel-solution-microsoftdefenderforcloud"
+                }
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/onboardingStates', 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.SecurityInsights/contentPackages",
+              "apiVersion": "2024-03-01",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "azuresentinel.azure-sentinel-solution-dns-domain",
+              "properties": {
+                "version": "3.0.4",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "azuresentinel.azure-sentinel-solution-dns-domain",
+                "contentProductId": "azuresentinel.azure-sentinel-solution-dns-domain-sl-ekdkjxal4jlhc",
+                "contentKind": "Solution",
+                "displayName": "DNS Essentials",
+                "source": {
+                  "kind": "Solution",
+                  "name": "DNS Essentials",
+                  "sourceId": "azuresentinel.azure-sentinel-solution-dns-domain"
+                }
+              },
+              "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/onboardingStates', 'default')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "sentinelOnboarded": {
+              "type": "bool",
+              "value": true
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]"
+      ]
+    },
+    {
+      "condition": "[parameters('enableSentinelSolutions')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-detection-T1098-006",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": "[if(variables('useExistingWorkspace'), createObject('value', last(split(parameters('existingWorkspaceResourceId'), '/'))), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceName.value))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "12769113139183708463"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "$fxv#0": "// ============================================================================\n// Detection: ClusterRoleBinding / RoleBinding Creation by Non-System Principal\n// MITRE ATT&CK: T1098.006 - Additional Container Cluster Roles\n// Source: AKSAudit\n// ============================================================================\n//\n// Logic: RBAC binding creation outside CI/CD or system controllers is rare and\n// almost always suspicious. In a production cluster you'd add Argo/Flux/Helm\n// controllers to the exclusion list — for the lab, only K8s system controllers\n// are excluded.\n\nAKSAudit\n| where TimeGenerated > ago(1h)\n| where Stage == \"ResponseComplete\"\n| where Verb in (\"create\", \"update\", \"patch\")\n| extend\n    Username     = tostring(User.username),\n    Resource     = tostring(ObjectRef.resource),\n    Namespace    = tostring(ObjectRef.namespace),\n    BindingName  = tostring(ObjectRef.name),\n    ResponseCode = toint(ResponseStatus.code),\n    SourceIp     = tostring(SourceIps[0])\n| where Resource in (\"clusterrolebindings\", \"rolebindings\")\n| where ResponseCode between (200 .. 299)\n// Exclude stable system actors\n| where not(Username startswith \"system:serviceaccount:kube-system:\")\n| where not(Username startswith \"system:node:\")\n| where Username != \"system:kube-controller-manager\"\n| project\n    TimeGenerated, Username, Verb, Resource, BindingName, Namespace,\n    SourceIp, UserAgent\n| extend MitreTechnique = \"T1098.006\"\n"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "rule-T1098-006",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "workspaceName": {
+                    "value": "[parameters('workspaceName')]"
+                  },
+                  "ruleName": {
+                    "value": "T1098-006-ClusterRoleBindingCreation"
+                  },
+                  "displayName": {
+                    "value": "T1098.006 - RBAC Binding Created by Non-System Principal"
+                  },
+                  "ruleDescription": {
+                    "value": "Detects ClusterRoleBinding or RoleBinding creation by principals outside the K8s system controller set. Likely indicator of persistence via additional cluster roles (MITRE T1098.006)."
+                  },
+                  "severity": {
+                    "value": "High"
+                  },
+                  "queryContent": {
+                    "value": "[variables('$fxv#0')]"
+                  },
+                  "queryFrequency": {
+                    "value": "PT15M"
+                  },
+                  "queryPeriod": {
+                    "value": "PT1H"
+                  },
+                  "triggerThreshold": {
+                    "value": 0
+                  },
+                  "tactics": {
+                    "value": [
+                      "Persistence",
+                      "PrivilegeEscalation"
+                    ]
+                  },
+                  "techniques": {
+                    "value": [
+                      "T1098"
+                    ]
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.42.1.51946",
+                      "templateHash": "3882065190967333358"
+                    }
+                  },
+                  "parameters": {
+                    "workspaceName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Log Analytics workspace name"
+                      }
+                    },
+                    "ruleName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Rule name (no spaces, alphanumeric + dashes)"
+                      }
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Display name shown in Sentinel UI"
+                      }
+                    },
+                    "ruleDescription": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Description of what the rule detects"
+                      }
+                    },
+                    "severity": {
+                      "type": "string",
+                      "allowedValues": [
+                        "Informational",
+                        "Low",
+                        "Medium",
+                        "High"
+                      ],
+                      "metadata": {
+                        "description": "Severity: Informational, Low, Medium, High"
+                      }
+                    },
+                    "queryContent": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "The KQL query content (loaded via loadTextContent in caller)"
+                      }
+                    },
+                    "queryFrequency": {
+                      "type": "string",
+                      "defaultValue": "PT15M",
+                      "metadata": {
+                        "description": "How often the rule runs (ISO 8601 duration, e.g. PT15M)"
+                      }
+                    },
+                    "queryPeriod": {
+                      "type": "string",
+                      "defaultValue": "PT1H",
+                      "metadata": {
+                        "description": "How far back the query looks (ISO 8601 duration)"
+                      }
+                    },
+                    "triggerThreshold": {
+                      "type": "int",
+                      "defaultValue": 0,
+                      "metadata": {
+                        "description": "Threshold above which to fire — 0 means any match fires"
+                      }
+                    },
+                    "tactics": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "MITRE ATT&CK tactics"
+                      }
+                    },
+                    "techniques": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "MITRE ATT&CK technique IDs (without sub-technique suffix)"
+                      }
+                    },
+                    "enabled": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Whether the rule is enabled"
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.SecurityInsights/alertRules",
+                      "apiVersion": "2023-12-01-preview",
+                      "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+                      "name": "[parameters('ruleName')]",
+                      "kind": "Scheduled",
+                      "properties": {
+                        "displayName": "[parameters('displayName')]",
+                        "description": "[parameters('ruleDescription')]",
+                        "severity": "[parameters('severity')]",
+                        "enabled": "[parameters('enabled')]",
+                        "query": "[parameters('queryContent')]",
+                        "queryFrequency": "[parameters('queryFrequency')]",
+                        "queryPeriod": "[parameters('queryPeriod')]",
+                        "triggerOperator": "GreaterThan",
+                        "triggerThreshold": "[parameters('triggerThreshold')]",
+                        "suppressionEnabled": false,
+                        "suppressionDuration": "PT5H",
+                        "tactics": "[parameters('tactics')]",
+                        "techniques": "[parameters('techniques')]",
+                        "entityMappings": [
+                          {
+                            "entityType": "Account",
+                            "fieldMappings": [
+                              {
+                                "identifier": "FullName",
+                                "columnName": "Username"
+                              }
+                            ]
+                          },
+                          {
+                            "entityType": "IP",
+                            "fieldMappings": [
+                              {
+                                "identifier": "Address",
+                                "columnName": "SourceIp"
+                              }
+                            ]
+                          }
+                        ],
+                        "incidentConfiguration": {
+                          "createIncident": true,
+                          "groupingConfiguration": {
+                            "enabled": true,
+                            "reopenClosedIncident": false,
+                            "lookbackDuration": "PT5H",
+                            "matchingMethod": "AllEntities"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "ruleId": {
+                      "type": "string",
+                      "value": "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/alertRules', parameters('ruleName'))]"
+                    },
+                    "ruleName": {
+                      "type": "string",
+                      "value": "[parameters('ruleName')]"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "ruleId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'rule-T1098-006'), '2025-04-01').outputs.ruleId.value]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]",
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-aks-sentinel')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-aks-policy-defs",
+      "subscriptionId": "[subscription().subscriptionId]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "3263483914644285930"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/policyDefinitions",
+              "apiVersion": "2023-04-01",
+              "name": "aks-dine-all-diag-categories",
+              "properties": {
+                "policyType": "Custom",
+                "mode": "Indexed",
+                "displayName": "Deploy diagnostic settings for AKS with all 11 log categories",
+                "description": "Automatically deploys a diagnostic setting on AKS clusters that enables all 11 log categories in resource-specific mode.",
+                "metadata": {
+                  "category": "Kubernetes",
+                  "version": "2.0.0"
+                },
+                "parameters": {
+                  "logAnalyticsWorkspaceId": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Log Analytics Workspace Resource ID",
+                      "strongType": "omsWorkspace",
+                      "assignPermissions": true
+                    }
+                  },
+                  "effect": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Effect"
+                    },
+                    "allowedValues": [
+                      "DeployIfNotExists",
+                      "AuditIfNotExists",
+                      "Disabled"
+                    ],
+                    "defaultValue": "DeployIfNotExists"
+                  },
+                  "diagnosticSettingName": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Diagnostic Setting Name"
+                    },
+                    "defaultValue": "aks-full-security-diag-policy"
+                  }
+                },
+                "policyRule": {
+                  "if": {
+                    "field": "type",
+                    "equals": "Microsoft.ContainerService/managedClusters"
+                  },
+                  "then": {
+                    "effect": "[[parameters('effect')]",
+                    "details": {
+                      "type": "Microsoft.Insights/diagnosticSettings",
+                      "name": "[[parameters('diagnosticSettingName')]",
+                      "roleDefinitionIds": [
+                        "/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa",
+                        "/providers/Microsoft.Authorization/roleDefinitions/92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+                      ],
+                      "existenceCondition": {
+                        "allOf": [
+                          {
+                            "field": "Microsoft.Insights/diagnosticSettings/workspaceId",
+                            "equals": "[[parameters('logAnalyticsWorkspaceId')]"
+                          },
+                          {
+                            "count": {
+                              "field": "Microsoft.Insights/diagnosticSettings/logs[*]",
+                              "where": {
+                                "allOf": [
+                                  {
+                                    "field": "Microsoft.Insights/diagnosticSettings/logs[*].enabled",
+                                    "equals": "true"
+                                  },
+                                  {
+                                    "field": "Microsoft.Insights/diagnosticSettings/logs[*].category",
+                                    "in": [
+                                      "kube-audit",
+                                      "kube-audit-admin",
+                                      "kube-apiserver",
+                                      "kube-controller-manager",
+                                      "kube-scheduler",
+                                      "cluster-autoscaler",
+                                      "cloud-controller-manager",
+                                      "guard",
+                                      "csi-azuredisk-controller",
+                                      "csi-azurefile-controller",
+                                      "csi-snapshot-controller"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "greaterOrEquals": 11
+                          }
+                        ]
+                      },
+                      "deployment": {
+                        "properties": {
+                          "mode": "incremental",
+                          "template": {
+                            "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                            "contentVersion": "1.0.0.0",
+                            "parameters": {
+                              "clusterName": {
+                                "type": "string"
+                              },
+                              "clusterLocation": {
+                                "type": "string"
+                              },
+                              "logAnalyticsWorkspaceId": {
+                                "type": "string"
+                              },
+                              "diagnosticSettingName": {
+                                "type": "string"
+                              }
+                            },
+                            "resources": [
+                              {
+                                "type": "Microsoft.ContainerService/managedClusters/providers/diagnosticSettings",
+                                "apiVersion": "2021-05-01-preview",
+                                "name": "[[concat(parameters('clusterName'), '/Microsoft.Insights/', parameters('diagnosticSettingName'))]",
+                                "location": "[[parameters('clusterLocation')]",
+                                "properties": {
+                                  "workspaceId": "[[parameters('logAnalyticsWorkspaceId')]",
+                                  "logAnalyticsDestinationType": "Dedicated",
+                                  "logs": [
+                                    {
+                                      "category": "kube-audit",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "kube-audit-admin",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "kube-apiserver",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "kube-controller-manager",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "kube-scheduler",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "cluster-autoscaler",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "cloud-controller-manager",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "guard",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "csi-azuredisk-controller",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "csi-azurefile-controller",
+                                      "enabled": true
+                                    },
+                                    {
+                                      "category": "csi-snapshot-controller",
+                                      "enabled": true
+                                    }
+                                  ],
+                                  "metrics": [
+                                    {
+                                      "category": "AllMetrics",
+                                      "enabled": true
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "clusterName": {
+                              "value": "[[field('name')]"
+                            },
+                            "clusterLocation": {
+                              "value": "[[field('location')]"
+                            },
+                            "logAnalyticsWorkspaceId": {
+                              "value": "[[parameters('logAnalyticsWorkspaceId')]"
+                            },
+                            "diagnosticSettingName": {
+                              "value": "[[parameters('diagnosticSettingName')]"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/policyDefinitions",
+              "apiVersion": "2023-04-01",
+              "name": "aks-require-network-policy",
+              "properties": {
+                "policyType": "Custom",
+                "mode": "Indexed",
+                "displayName": "AKS clusters must have a network policy plugin configured",
+                "description": "Audits that networkProfile.networkPolicy is set to azure, calico, or cilium.",
+                "metadata": {
+                  "category": "Kubernetes",
+                  "version": "1.0.0"
+                },
+                "parameters": {
+                  "effect": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Effect"
+                    },
+                    "allowedValues": [
+                      "Audit",
+                      "Deny",
+                      "Disabled"
+                    ],
+                    "defaultValue": "Audit"
+                  }
+                },
+                "policyRule": {
+                  "if": {
+                    "allOf": [
+                      {
+                        "field": "type",
+                        "equals": "Microsoft.ContainerService/managedClusters"
+                      },
+                      {
+                        "field": "Microsoft.ContainerService/managedClusters/networkProfile.networkPolicy",
+                        "exists": "false"
+                      }
+                    ]
+                  },
+                  "then": {
+                    "effect": "[[parameters('effect')]"
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/policyDefinitions",
+              "apiVersion": "2023-04-01",
+              "name": "aks-require-defender-sensor",
+              "properties": {
+                "policyType": "Custom",
+                "mode": "Indexed",
+                "displayName": "AKS clusters must have Microsoft Defender sensor enabled",
+                "description": "Audits AKS clusters for securityProfile.defender.securityMonitoring.enabled = true.",
+                "metadata": {
+                  "category": "Kubernetes",
+                  "version": "1.0.0"
+                },
+                "parameters": {
+                  "effect": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Effect"
+                    },
+                    "allowedValues": [
+                      "Audit",
+                      "Deny",
+                      "Disabled"
+                    ],
+                    "defaultValue": "Audit"
+                  }
+                },
+                "policyRule": {
+                  "if": {
+                    "allOf": [
+                      {
+                        "field": "type",
+                        "equals": "Microsoft.ContainerService/managedClusters"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "field": "Microsoft.ContainerService/managedClusters/securityProfile.defender.securityMonitoring.enabled",
+                            "exists": "false"
+                          },
+                          {
+                            "field": "Microsoft.ContainerService/managedClusters/securityProfile.defender.securityMonitoring.enabled",
+                            "notEquals": "true"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "then": {
+                    "effect": "[[parameters('effect')]"
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/policyDefinitions",
+              "apiVersion": "2023-04-01",
+              "name": "aks-require-entra-rbac",
+              "properties": {
+                "policyType": "Custom",
+                "mode": "Indexed",
+                "displayName": "AKS clusters must use Entra ID RBAC with local accounts disabled",
+                "description": "Ensures disableLocalAccounts=true and aadProfile.enableAzureRBAC=true.",
+                "metadata": {
+                  "category": "Kubernetes",
+                  "version": "1.0.0"
+                },
+                "parameters": {
+                  "effect": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Effect"
+                    },
+                    "allowedValues": [
+                      "Audit",
+                      "Deny",
+                      "Disabled"
+                    ],
+                    "defaultValue": "Audit"
+                  }
+                },
+                "policyRule": {
+                  "if": {
+                    "allOf": [
+                      {
+                        "field": "type",
+                        "equals": "Microsoft.ContainerService/managedClusters"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "field": "Microsoft.ContainerService/managedClusters/disableLocalAccounts",
+                            "notEquals": "true"
+                          },
+                          {
+                            "field": "Microsoft.ContainerService/managedClusters/aadProfile.enableAzureRBAC",
+                            "notEquals": "true"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "then": {
+                    "effect": "[[parameters('effect')]"
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/policyDefinitions",
+              "apiVersion": "2023-04-01",
+              "name": "kv-dine-diagnostic-settings",
+              "properties": {
+                "policyType": "Custom",
+                "mode": "Indexed",
+                "displayName": "Deploy diagnostic settings for Key Vault to Log Analytics",
+                "description": "Automatically deploys a diagnostic setting on Key Vaults.",
+                "metadata": {
+                  "category": "Key Vault",
+                  "version": "1.0.0"
+                },
+                "parameters": {
+                  "logAnalyticsWorkspaceId": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Log Analytics Workspace Resource ID",
+                      "strongType": "omsWorkspace",
+                      "assignPermissions": true
+                    }
+                  },
+                  "effect": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Effect"
+                    },
+                    "allowedValues": [
+                      "DeployIfNotExists",
+                      "AuditIfNotExists",
+                      "Disabled"
+                    ],
+                    "defaultValue": "DeployIfNotExists"
+                  },
+                  "diagnosticSettingName": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Diagnostic Setting Name"
+                    },
+                    "defaultValue": "kv-security-diag-policy"
+                  }
+                },
+                "policyRule": {
+                  "if": {
+                    "field": "type",
+                    "equals": "Microsoft.KeyVault/vaults"
+                  },
+                  "then": {
+                    "effect": "[[parameters('effect')]",
+                    "details": {
+                      "type": "Microsoft.Insights/diagnosticSettings",
+                      "name": "[[parameters('diagnosticSettingName')]",
+                      "roleDefinitionIds": [
+                        "/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa",
+                        "/providers/Microsoft.Authorization/roleDefinitions/92aaf0da-9dab-42b6-94a3-d43ce8d16293"
+                      ],
+                      "existenceCondition": {
+                        "allOf": [
+                          {
+                            "field": "Microsoft.Insights/diagnosticSettings/workspaceId",
+                            "equals": "[[parameters('logAnalyticsWorkspaceId')]"
+                          },
+                          {
+                            "count": {
+                              "field": "Microsoft.Insights/diagnosticSettings/logs[*]",
+                              "where": {
+                                "field": "Microsoft.Insights/diagnosticSettings/logs[*].enabled",
+                                "equals": "true"
+                              }
+                            },
+                            "greaterOrEquals": 1
+                          }
+                        ]
+                      },
+                      "deployment": {
+                        "properties": {
+                          "mode": "incremental",
+                          "template": {
+                            "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                            "contentVersion": "1.0.0.0",
+                            "parameters": {
+                              "vaultName": {
+                                "type": "string"
+                              },
+                              "vaultLocation": {
+                                "type": "string"
+                              },
+                              "logAnalyticsWorkspaceId": {
+                                "type": "string"
+                              },
+                              "diagnosticSettingName": {
+                                "type": "string"
+                              }
+                            },
+                            "resources": [
+                              {
+                                "type": "Microsoft.KeyVault/vaults/providers/diagnosticSettings",
+                                "apiVersion": "2021-05-01-preview",
+                                "name": "[[concat(parameters('vaultName'), '/Microsoft.Insights/', parameters('diagnosticSettingName'))]",
+                                "location": "[[parameters('vaultLocation')]",
+                                "properties": {
+                                  "workspaceId": "[[parameters('logAnalyticsWorkspaceId')]",
+                                  "logs": [
+                                    {
+                                      "categoryGroup": "allLogs",
+                                      "enabled": true
+                                    }
+                                  ],
+                                  "metrics": [
+                                    {
+                                      "category": "AllMetrics",
+                                      "enabled": true
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "vaultName": {
+                              "value": "[[field('name')]"
+                            },
+                            "vaultLocation": {
+                              "value": "[[field('location')]"
+                            },
+                            "logAnalyticsWorkspaceId": {
+                              "value": "[[parameters('logAnalyticsWorkspaceId')]"
+                            },
+                            "diagnosticSettingName": {
+                              "value": "[[parameters('diagnosticSettingName')]"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/policySetDefinitions",
+              "apiVersion": "2023-04-01",
+              "name": "aks-adversary-lab-logging-initiative",
+              "properties": {
+                "policyType": "Custom",
+                "displayName": "AKS Adversary Lab - MITRE ATT&CK Containers Logging & Security",
+                "description": "Audit and DeployIfNotExists policies for AKS logging, security, and pod security.",
+                "metadata": {
+                  "category": "Kubernetes",
+                  "version": "2.1.0"
+                },
+                "parameters": {
+                  "logAnalyticsWorkspaceId": {
+                    "type": "String",
+                    "metadata": {
+                      "displayName": "Log Analytics Workspace Resource ID",
+                      "strongType": "omsWorkspace",
+                      "assignPermissions": true
+                    }
+                  }
+                },
+                "policyDefinitions": [
+                  {
+                    "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-dine-all-diag-categories')]",
+                    "policyDefinitionReferenceId": "aksDineAllDiagCategories",
+                    "parameters": {
+                      "logAnalyticsWorkspaceId": {
+                        "value": "[[parameters('logAnalyticsWorkspaceId')]"
+                      },
+                      "effect": {
+                        "value": "AuditIfNotExists"
+                      },
+                      "diagnosticSettingName": {
+                        "value": "aks-full-security-diag-policy"
+                      }
+                    },
+                    "groupNames": [
+                      "Logging"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-require-network-policy')]",
+                    "policyDefinitionReferenceId": "aksNetworkPolicyRequired",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      }
+                    },
+                    "groupNames": [
+                      "Network"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-require-defender-sensor')]",
+                    "policyDefinitionReferenceId": "aksDefenderRequired",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      }
+                    },
+                    "groupNames": [
+                      "Security"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-require-entra-rbac')]",
+                    "policyDefinitionReferenceId": "aksEntraRbacRequired",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      }
+                    },
+                    "groupNames": [
+                      "Identity"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'kv-dine-diagnostic-settings')]",
+                    "policyDefinitionReferenceId": "kvDineAllDiagCategories",
+                    "parameters": {
+                      "logAnalyticsWorkspaceId": {
+                        "value": "[[parameters('logAnalyticsWorkspaceId')]"
+                      },
+                      "effect": {
+                        "value": "AuditIfNotExists"
+                      },
+                      "diagnosticSettingName": {
+                        "value": "kv-security-diag-policy"
+                      }
+                    },
+                    "groupNames": [
+                      "Logging"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "/providers/Microsoft.Authorization/policyDefinitions/95edb821-ddaf-4404-9732-666045e056b4",
+                    "policyDefinitionReferenceId": "aksNoPrivilegedContainers",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      }
+                    },
+                    "groupNames": [
+                      "PodSecurity"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "/providers/Microsoft.Authorization/policyDefinitions/1c6e92c9-99f0-4e55-9cf2-0c234dc48f99",
+                    "policyDefinitionReferenceId": "aksNoPrivilegeEscalation",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      }
+                    },
+                    "groupNames": [
+                      "PodSecurity"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "/providers/Microsoft.Authorization/policyDefinitions/47a1ee2f-2a2a-4576-bf2a-e0e36709c2b8",
+                    "policyDefinitionReferenceId": "aksBlockHostNamespace",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      }
+                    },
+                    "groupNames": [
+                      "PodSecurity"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "/providers/Microsoft.Authorization/policyDefinitions/098fc59e-46c7-4d99-9b16-64990e543d75",
+                    "policyDefinitionReferenceId": "aksRestrictHostFilesystem",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      },
+                      "allowedHostPaths": {
+                        "value": {
+                          "paths": []
+                        }
+                      }
+                    },
+                    "groupNames": [
+                      "PodSecurity"
+                    ]
+                  },
+                  {
+                    "policyDefinitionId": "/providers/Microsoft.Authorization/policyDefinitions/0e246bcf-5f6f-4f87-bc6f-775d4712c7ea",
+                    "policyDefinitionReferenceId": "aksAuthorizedIpRanges",
+                    "parameters": {
+                      "effect": {
+                        "value": "Audit"
+                      }
+                    },
+                    "groupNames": [
+                      "Network"
+                    ]
+                  }
+                ],
+                "policyDefinitionGroups": [
+                  {
+                    "name": "Logging",
+                    "displayName": "Logging & Diagnostics",
+                    "description": "Diagnostic settings and log collection policies"
+                  },
+                  {
+                    "name": "Security",
+                    "displayName": "Security Controls",
+                    "description": "Runtime security monitoring policies"
+                  },
+                  {
+                    "name": "PodSecurity",
+                    "displayName": "Pod Security Standards",
+                    "description": "Pod security admission policies"
+                  },
+                  {
+                    "name": "Network",
+                    "displayName": "Network Security",
+                    "description": "Network segmentation and access policies"
+                  },
+                  {
+                    "name": "Identity",
+                    "displayName": "Identity & Access",
+                    "description": "Entra ID integration and RBAC policies"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-require-defender-sensor')]",
+                "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-require-network-policy')]",
+                "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-require-entra-rbac')]",
+                "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'aks-dine-all-diag-categories')]",
+                "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'kv-dine-diagnostic-settings')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "initiativeId": {
+              "type": "string",
+              "value": "[subscriptionResourceId('Microsoft.Authorization/policySetDefinitions', 'aks-adversary-lab-logging-initiative')]"
+            },
+            "initiativeName": {
+              "type": "string",
+              "value": "aks-adversary-lab-logging-initiative"
+            },
+            "policyCount": {
+              "type": "int",
+              "value": 10
+            },
+            "customPolicyCount": {
+              "type": "int",
+              "value": 5
+            },
+            "builtInPolicyCount": {
+              "type": "int",
+              "value": 5
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-aks-policy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "initiativeId": {
+            "value": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', 'deploy-aks-policy-defs'), '2025-04-01').outputs.initiativeId.value]"
+          },
+          "logAnalyticsWorkspaceId": "[if(variables('useExistingWorkspace'), createObject('value', parameters('existingWorkspaceResourceId')), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceResourceId.value))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "13566187743935983371"
+            }
+          },
+          "parameters": {
+            "initiativeId": {
+              "type": "string",
+              "metadata": {
+                "description": "The resource ID of the policy initiative to assign"
+              }
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics Workspace Resource ID for the initiative parameter"
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/policyAssignments",
+              "apiVersion": "2022-06-01",
+              "name": "aks-lab-mitre-logging",
+              "location": "[resourceGroup().location]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "displayName": "AKS Adversary Lab - MITRE Logging Enforcement",
+                "description": "DeployIfNotExists enforcement for all 11 AKS diagnostic categories.",
+                "policyDefinitionId": "[parameters('initiativeId')]",
+                "enforcementMode": "Default",
+                "parameters": {
+                  "logAnalyticsWorkspaceId": {
+                    "value": "[parameters('logAnalyticsWorkspaceId')]"
+                  }
+                },
+                "nonComplianceMessages": [
+                  {
+                    "message": "This AKS cluster is missing full diagnostic logging."
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging'), 'monitoring-contributor')]",
+              "properties": {
+                "principalId": "[reference(resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging'), '2022-06-01', 'full').identity.principalId]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '749f88d5-cbae-40b8-bcfc-e573ddc772fa')]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging'), 'log-analytics-contributor')]",
+              "properties": {
+                "principalId": "[reference(resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging'), '2022-06-01', 'full').identity.principalId]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '92aaf0da-9dab-42b6-94a3-d43ce8d16293')]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging'), 'contributor')]",
+              "properties": {
+                "principalId": "[reference(resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging'), '2022-06-01', 'full').identity.principalId]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "assignmentId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging')]"
+            },
+            "assignmentPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Authorization/policyAssignments', 'aks-lab-mitre-logging'), '2022-06-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/deployments', 'deploy-aks-policy-defs')]",
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "clusterName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster'), '2025-04-01').outputs.clusterName.value]"
+    },
+    "clusterFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster'), '2025-04-01').outputs.clusterFqdn.value]"
+    },
+    "kubectlConnectCommand": {
+      "type": "string",
+      "value": "[format('az aks get-credentials --resource-group {0} --name {1}', resourceGroup().name, reference(resourceId('Microsoft.Resources/deployments', 'deploy-aks-cluster'), '2025-04-01').outputs.clusterName.value)]"
+    },
+    "logAnalyticsWorkspaceName": {
+      "type": "string",
+      "value": "[if(variables('useExistingWorkspace'), last(split(parameters('existingWorkspaceResourceId'), '/')), reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceName.value)]"
+    },
+    "logAnalyticsWorkspaceId": {
+      "type": "string",
+      "value": "[if(variables('useExistingWorkspace'), parameters('existingWorkspaceResourceId'), reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceResourceId.value)]"
+    },
+    "workspaceIsNew": {
+      "type": "bool",
+      "value": "[not(variables('useExistingWorkspace'))]"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-acr'), '2025-04-01').outputs.acrLoginServer.value]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-keyvault'), '2025-04-01').outputs.keyVaultName.value]"
+    },
+    "keyVaultUri": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-keyvault'), '2025-04-01').outputs.keyVaultUri.value]"
+    }
+  }
+}

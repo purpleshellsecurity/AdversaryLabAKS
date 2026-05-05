@@ -1,0 +1,238 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "12769113139183708463"
+    }
+  },
+  "parameters": {
+    "workspaceName": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "$fxv#0": "// ============================================================================\n// Detection: ClusterRoleBinding / RoleBinding Creation by Non-System Principal\n// MITRE ATT&CK: T1098.006 - Additional Container Cluster Roles\n// Source: AKSAudit\n// ============================================================================\n//\n// Logic: RBAC binding creation outside CI/CD or system controllers is rare and\n// almost always suspicious. In a production cluster you'd add Argo/Flux/Helm\n// controllers to the exclusion list — for the lab, only K8s system controllers\n// are excluded.\n\nAKSAudit\n| where TimeGenerated > ago(1h)\n| where Stage == \"ResponseComplete\"\n| where Verb in (\"create\", \"update\", \"patch\")\n| extend\n    Username     = tostring(User.username),\n    Resource     = tostring(ObjectRef.resource),\n    Namespace    = tostring(ObjectRef.namespace),\n    BindingName  = tostring(ObjectRef.name),\n    ResponseCode = toint(ResponseStatus.code),\n    SourceIp     = tostring(SourceIps[0])\n| where Resource in (\"clusterrolebindings\", \"rolebindings\")\n| where ResponseCode between (200 .. 299)\n// Exclude stable system actors\n| where not(Username startswith \"system:serviceaccount:kube-system:\")\n| where not(Username startswith \"system:node:\")\n| where Username != \"system:kube-controller-manager\"\n| project\n    TimeGenerated, Username, Verb, Resource, BindingName, Namespace,\n    SourceIp, UserAgent\n| extend MitreTechnique = \"T1098.006\"\n"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "rule-T1098-006",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": {
+            "value": "[parameters('workspaceName')]"
+          },
+          "ruleName": {
+            "value": "T1098-006-ClusterRoleBindingCreation"
+          },
+          "displayName": {
+            "value": "T1098.006 - RBAC Binding Created by Non-System Principal"
+          },
+          "ruleDescription": {
+            "value": "Detects ClusterRoleBinding or RoleBinding creation by principals outside the K8s system controller set. Likely indicator of persistence via additional cluster roles (MITRE T1098.006)."
+          },
+          "severity": {
+            "value": "High"
+          },
+          "queryContent": {
+            "value": "[variables('$fxv#0')]"
+          },
+          "queryFrequency": {
+            "value": "PT15M"
+          },
+          "queryPeriod": {
+            "value": "PT1H"
+          },
+          "triggerThreshold": {
+            "value": 0
+          },
+          "tactics": {
+            "value": [
+              "Persistence",
+              "PrivilegeEscalation"
+            ]
+          },
+          "techniques": {
+            "value": [
+              "T1098"
+            ]
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "3882065190967333358"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics workspace name"
+              }
+            },
+            "ruleName": {
+              "type": "string",
+              "metadata": {
+                "description": "Rule name (no spaces, alphanumeric + dashes)"
+              }
+            },
+            "displayName": {
+              "type": "string",
+              "metadata": {
+                "description": "Display name shown in Sentinel UI"
+              }
+            },
+            "ruleDescription": {
+              "type": "string",
+              "metadata": {
+                "description": "Description of what the rule detects"
+              }
+            },
+            "severity": {
+              "type": "string",
+              "allowedValues": [
+                "Informational",
+                "Low",
+                "Medium",
+                "High"
+              ],
+              "metadata": {
+                "description": "Severity: Informational, Low, Medium, High"
+              }
+            },
+            "queryContent": {
+              "type": "string",
+              "metadata": {
+                "description": "The KQL query content (loaded via loadTextContent in caller)"
+              }
+            },
+            "queryFrequency": {
+              "type": "string",
+              "defaultValue": "PT15M",
+              "metadata": {
+                "description": "How often the rule runs (ISO 8601 duration, e.g. PT15M)"
+              }
+            },
+            "queryPeriod": {
+              "type": "string",
+              "defaultValue": "PT1H",
+              "metadata": {
+                "description": "How far back the query looks (ISO 8601 duration)"
+              }
+            },
+            "triggerThreshold": {
+              "type": "int",
+              "defaultValue": 0,
+              "metadata": {
+                "description": "Threshold above which to fire — 0 means any match fires"
+              }
+            },
+            "tactics": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "MITRE ATT&CK tactics"
+              }
+            },
+            "techniques": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "MITRE ATT&CK technique IDs (without sub-technique suffix)"
+              }
+            },
+            "enabled": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Whether the rule is enabled"
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.SecurityInsights/alertRules",
+              "apiVersion": "2023-12-01-preview",
+              "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+              "name": "[parameters('ruleName')]",
+              "kind": "Scheduled",
+              "properties": {
+                "displayName": "[parameters('displayName')]",
+                "description": "[parameters('ruleDescription')]",
+                "severity": "[parameters('severity')]",
+                "enabled": "[parameters('enabled')]",
+                "query": "[parameters('queryContent')]",
+                "queryFrequency": "[parameters('queryFrequency')]",
+                "queryPeriod": "[parameters('queryPeriod')]",
+                "triggerOperator": "GreaterThan",
+                "triggerThreshold": "[parameters('triggerThreshold')]",
+                "suppressionEnabled": false,
+                "suppressionDuration": "PT5H",
+                "tactics": "[parameters('tactics')]",
+                "techniques": "[parameters('techniques')]",
+                "entityMappings": [
+                  {
+                    "entityType": "Account",
+                    "fieldMappings": [
+                      {
+                        "identifier": "FullName",
+                        "columnName": "Username"
+                      }
+                    ]
+                  },
+                  {
+                    "entityType": "IP",
+                    "fieldMappings": [
+                      {
+                        "identifier": "Address",
+                        "columnName": "SourceIp"
+                      }
+                    ]
+                  }
+                ],
+                "incidentConfiguration": {
+                  "createIncident": true,
+                  "groupingConfiguration": {
+                    "enabled": true,
+                    "reopenClosedIncident": false,
+                    "lookbackDuration": "PT5H",
+                    "matchingMethod": "AllEntities"
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "ruleId": {
+              "type": "string",
+              "value": "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/alertRules', parameters('ruleName'))]"
+            },
+            "ruleName": {
+              "type": "string",
+              "value": "[parameters('ruleName')]"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "ruleId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'rule-T1098-006'), '2025-04-01').outputs.ruleId.value]"
+    }
+  }
+}

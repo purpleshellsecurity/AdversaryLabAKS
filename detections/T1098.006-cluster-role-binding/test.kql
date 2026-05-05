@@ -1,0 +1,19 @@
+// ============================================================================
+// Test Assertion: T1098.006 - Verifies the detection would fire
+// Used by the CI validation harness to confirm attack-fires-detection.
+// Returns count of matching events. Harness asserts count > 0.
+// ============================================================================
+
+AKSAudit
+| where TimeGenerated > ago(30m)
+| where Stage == "ResponseComplete"
+| where Verb == "create"
+| extend
+    Username    = tostring(User.username),
+    Resource    = tostring(ObjectRef.resource),
+    BindingName = tostring(ObjectRef.name)
+| where Resource == "clusterrolebindings"
+| where BindingName startswith "adversary-lab-test-crb-"
+| where toint(ResponseStatus.code) between (200 .. 299)
+| project TimeGenerated, Username, BindingName
+| count
