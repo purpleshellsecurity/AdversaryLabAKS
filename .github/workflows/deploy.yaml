@@ -41,7 +41,7 @@ on:
 
 concurrency:
   group: deploy-lab
-  cancel-in-progress: false   # never cancel a running deploy or destroy
+  cancel-in-progress: false
 
 permissions:
   id-token: write
@@ -51,12 +51,10 @@ env:
   RESOURCE_GROUP: rg-${{ github.event.inputs.name_prefix }}-aks-lab
 
 jobs:
-  # ── Preflight ────────────────────────────────────────────────────────────────
   preflight:
     name: Preflight checks
     runs-on: ubuntu-latest
     environment: lab
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,7 +81,6 @@ jobs:
         if: github.event.inputs.existing_workspace_id != ''
         run: |
           WS="${{ github.event.inputs.existing_workspace_id }}"
-          # Azure resource IDs are case-insensitive — match accordingly
           shopt -s nocasematch
           if [[ ! "$WS" =~ ^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\.operationalinsights/workspaces/[^/]+$ ]]; then
             echo "::error::existing_workspace_id is not a valid resource ID."
@@ -117,14 +114,12 @@ jobs:
           }
           echo "✓ Workspace verified: $RESULT"
 
-  # ── Deploy ───────────────────────────────────────────────────────────────────
   deploy:
     name: Deploy lab
     runs-on: ubuntu-latest
     environment: lab
     needs: preflight
     if: github.event.inputs.action == 'deploy'
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -144,11 +139,12 @@ jobs:
           if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
             WS_NAME=$(echo "${{ github.event.inputs.existing_workspace_id }}" | awk -F'/' '{print $NF}')
             echo "📋 Using existing workspace: $WS_NAME"
+            echo "   (activity log forwarding will be skipped — assumed already configured)"
           else
             echo "🆕 Creating new Log Analytics workspace"
+            echo "   (activity log forwarding will be enabled)"
           fi
 
-      # ── Layer 0: Resource group ─────────────────────────────────────────────
       - name: Create resource group
         run: |
           az group create \
@@ -161,10 +157,6 @@ jobs:
               DeployedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "✓ Resource group ready: ${{ env.RESOURCE_GROUP }}"
 
-      # ── Layer 1: Main stack ─────────────────────────────────────────────────
-      # Bicep handles workspace creation or reuse internally via
-      # existingWorkspaceResourceId param. Outputs always return the
-      # resolved workspace ID regardless of which path was taken.
       - name: Deploy main stack (Bicep)
         id: bicep
         run: |
@@ -175,7 +167,6 @@ jobs:
             authorizedIpRange="${{ github.event.inputs.authorized_ip }}"
           )
 
-          # Only pass existingWorkspaceResourceId if provided — Bicep defaults to ''
           if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
             PARAMS+=(existingWorkspaceResourceId="${{ github.event.inputs.existing_workspace_id }}")
           fi
@@ -198,22 +189,27 @@ jobs:
 
           echo "✓ Main stack deployed"
 
-      # ── Layer 2: Subscription-scope resources ───────────────────────────────
-      # Single pass — workspace ID is always available from Bicep outputs
-      # whether it was newly created or an existing workspace was used.
       - name: Deploy subscription-scope resources
         run: |
+          # Activity log forwarding only enabled for NEW workspaces.
+          # Existing workspaces likely already have it via Sentinel's
+          # Azure Activity solution — duplicate setting causes Conflict.
+          if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
+            ENABLE_ACTIVITY_LOG="false"
+          else
+            ENABLE_ACTIVITY_LOG="true"
+          fi
+
           az deployment sub create \
             --name "aks-lab-sub-$(date +%s)" \
             --location "${{ github.event.inputs.location }}" \
             --template-file infrastructure/main_subscription.bicep \
             --parameters \
-              location="${{ github.event.inputs.location }}" \
               logAnalyticsWorkspaceId="${{ steps.bicep.outputs.workspace_id }}" \
+              enableActivityLogForwarding="$ENABLE_ACTIVITY_LOG" \
             --query "properties.provisioningState" -o tsv
           echo "✓ Subscription-scope resources deployed"
 
-      # ── Layer 3: AKS credentials ────────────────────────────────────────────
       - name: Get AKS credentials
         run: |
           az aks get-credentials \
@@ -223,22 +219,18 @@ jobs:
           kubectl cluster-info
           echo "✓ kubectl configured"
 
-      # ── Layer 4: Namespaces (must exist before everything else) ─────────────
       - name: Apply namespaces
         run: |
           kubectl apply -f kubernetes/namespaces/
           kubectl get namespaces
           echo "✓ Namespaces created"
 
-      # ── Layer 5: RBAC ────────────────────────────────────────────────────────
       - name: Apply RBAC
         run: kubectl apply -f kubernetes/rbac/
 
-      # ── Layer 6: Network policies ────────────────────────────────────────────
       - name: Apply network policies
         run: kubectl apply -f kubernetes/network-policies/
 
-      # ── Layer 7: Falco (via Helm) ────────────────────────────────────────────
       - name: Install Helm
         uses: azure/setup-helm@v4
 
@@ -254,7 +246,6 @@ jobs:
             --timeout 5m
           echo "✓ Falco deployed"
 
-      # ── Layer 8: Remaining K8s resources ────────────────────────────────────
       - name: Apply monitoring resources
         run: kubectl apply -f kubernetes/monitoring/
 
@@ -266,7 +257,6 @@ jobs:
       - name: Deploy red team resources
         run: kubectl apply -f kubernetes/red-team/
 
-      # ── Summary ──────────────────────────────────────────────────────────────
       - name: Deployment summary
         run: |
           echo ""
@@ -289,14 +279,12 @@ jobs:
           echo ""
           kubectl get pods -A --field-selector=status.phase=Running 2>/dev/null | head -30
 
-  # ── Destroy ──────────────────────────────────────────────────────────────────
   destroy:
     name: Destroy lab
     runs-on: ubuntu-latest
     environment: lab
     needs: preflight
     if: github.event.inputs.action == 'destroy'
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -4,22 +4,37 @@
 
 targetScope = 'subscription'
 
-param location string
+@description('Log Analytics Workspace Resource ID')
 param logAnalyticsWorkspaceId string
+
+@description('Enable Defender for Containers pricing tier')
 param enableDefenderForContainers bool = true
+
+@description('Enable Defender for Key Vault pricing tier')
 param enableDefenderForKeyVault bool = true
 
-@description('Forward subscription Activity Log to the workspace. Set false if a Sentinel solution already does this.')
+@description('''
+Forward subscription Activity Log to the workspace.
+Set to false when an existing workspace already has activity logs flowing to it
+(e.g. via the Sentinel "Azure Activity" content solution, which auto-creates a
+diagnostic setting named "AzureActivity-Sentinel-<id>"). Azure rejects a second
+diagnostic setting that forwards the same category from the same source to the
+same workspace.
+''')
 param enableActivityLogForwarding bool = false
 
 resource defenderContainers 'Microsoft.Security/pricings@2024-01-01' = if (enableDefenderForContainers) {
   name: 'Containers'
-  properties: { pricingTier: 'Standard' }
+  properties: {
+    pricingTier: 'Standard'
+  }
 }
 
 resource defenderKeyVault 'Microsoft.Security/pricings@2024-01-01' = if (enableDefenderForKeyVault) {
   name: 'KeyVaults'
-  properties: { pricingTier: 'Standard' }
+  properties: {
+    pricingTier: 'Standard'
+  }
 }
 
 resource activityLogDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableActivityLogForwarding) {
@@ -41,3 +56,4 @@ resource activityLogDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-previ
 
 output defenderContainersEnabled bool = enableDefenderForContainers
 output defenderKeyVaultEnabled bool = enableDefenderForKeyVault
+output activityLogForwardingEnabled bool = enableActivityLogForwarding
