@@ -198,9 +198,6 @@ jobs:
 
       - name: Deploy subscription-scope resources
         run: |
-          # Activity log forwarding only enabled for NEW workspaces.
-          # Existing workspaces likely already have it via Sentinel's
-          # Azure Activity solution — duplicate setting causes Conflict.
           if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
             ENABLE_ACTIVITY_LOG="false"
           else
@@ -217,6 +214,33 @@ jobs:
             --query "properties.provisioningState" -o tsv
           echo "✓ Subscription-scope resources deployed"
 
+      # ── Allowlist the runner's IP so kubectl steps can reach the API server ─
+      # The cluster's authorized IP range is the operator's home IP. The
+      # GitHub-hosted runner has a different egress IP and would be blackholed
+      # without this. Cleanup step at end of job restores the original allowlist.
+      - name: Allowlist runner IP on AKS API server
+        id: runner_ip
+        run: |
+          RUNNER_IP=$(curl -sf https://api.ipify.org)
+          echo "Runner IP: $RUNNER_IP"
+          echo "ip=$RUNNER_IP" >> $GITHUB_OUTPUT
+
+          # Get current allowlist (your home IP from the deploy)
+          CURRENT_RANGES=$(az aks show \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ steps.bicep.outputs.cluster_name }}" \
+            --query "apiServerAccessProfile.authorizedIpRanges" -o tsv | tr '\n' ',' | sed 's/,$//')
+
+          # Append runner IP
+          NEW_RANGES="${CURRENT_RANGES},${RUNNER_IP}/32"
+
+          az aks update \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ steps.bicep.outputs.cluster_name }}" \
+            --api-server-authorized-ip-ranges "$NEW_RANGES"
+
+          echo "✓ Runner IP added to allowlist (will be removed at end of job)"
+
       - name: Get AKS credentials
         run: |
           az aks get-credentials \
@@ -226,7 +250,6 @@ jobs:
 
           # Convert kubeconfig to use the Azure CLI token (non-interactive auth)
           # — required because the cluster has Entra RBAC + disableLocalAccounts.
-          # Without this, kubectl tries device-code flow and fails in CI.
           kubelogin convert-kubeconfig -l azurecli
 
           kubectl cluster-info
@@ -292,6 +315,20 @@ jobs:
           echo "  kubelogin convert-kubeconfig -l azurecli"
           echo ""
           kubectl get pods -A --field-selector=status.phase=Running 2>/dev/null | head -30
+
+      # ── Cleanup: always restore the original allowlist ──────────────────────
+      # Runs even on failure so we don't leave the runner's ephemeral IP
+      # whitelisted on the cluster.
+      - name: Remove runner IP from AKS allowlist
+        if: always() && steps.runner_ip.outputs.ip != ''
+        run: |
+          ORIGINAL_RANGES="${{ github.event.inputs.authorized_ip }}"
+          az aks update \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ steps.bicep.outputs.cluster_name }}" \
+            --api-server-authorized-ip-ranges "$ORIGINAL_RANGES" \
+            || echo "⚠️  Failed to restore allowlist — may need manual cleanup"
+          echo "✓ Allowlist restored to original ($ORIGINAL_RANGES)"
 
   destroy:
     name: Destroy lab
