@@ -1,0 +1,34 @@
+# Umbrella-chart values for the AKS Adversary Lab.
+# The Falco chart is a DEPENDENCY (see Chart.yaml), so all of its values are
+# nested under the `falco:` key (the dependency name). `falco.falco` is Falco's
+# own falco.yaml config — the repeated name is expected with Helm subcharts.
+
+falco:
+  driver:
+    kind: modern_ebpf
+  collectors:
+    kubernetes:
+      enabled: true
+  falco:
+    json_output: true
+    json_include_output_property: true
+    log_stderr: true
+    log_syslog: false
+    log_level: info
+    rules_files:
+    - /etc/falco/falco_rules.yaml
+    - /etc/falco/falco_rules.local.yaml
+    - /etc/falco/rules.d
+  falcosidekick:
+    enabled: true
+    config:
+      debug: true
+  tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule
+  customRules:
+    adversary-lab-rules.yaml: "- rule: Read ServiceAccount Token in Container\n  desc: Detects processes reading the mounted SA token inside a container (MITRE T1528)\n  condition: >\n    open_read and\n    container and\n    (fd.name = \"/var/run/secrets/kubernetes.io/serviceaccount/token\" or\n     fd.name = \"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt\")\n  output: >\n    SA token read inside container\n    (user=%user.name command=%proc.cmdline file=%fd.name\n     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: WARNING\n  tags: [mitre_credential_access, T1528]\n\n- rule: Container Escape via nsenter\n  desc: Detects nsenter execution which may indicate container escape (MITRE T1611)\n  condition: >\n    spawned_process and\n    container and\n    proc.name = nsenter\n  output: >\n    nsenter executed in container \u2014 possible escape attempt\n    (user=%user.name command=%proc.cmdline\n\
+      \     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: CRITICAL\n  tags: [mitre_privilege_escalation, T1611]\n\n- rule: Crypto Mining Process Detected\n  desc: Detects known crypto mining binaries or pool connections (MITRE T1496.001)\n  condition: >\n    spawned_process and\n    container and\n    (proc.name in (xmrig, minerd, minergate, cpuminer) or\n     proc.cmdline contains \"stratum+tcp\" or\n     proc.cmdline contains \"pool.minexmr\" or\n     proc.cmdline contains \"cryptonight\")\n  output: >\n    Crypto mining activity detected\n    (process=%proc.name command=%proc.cmdline\n     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: CRITICAL\n  tags: [mitre_impact, T1496, T1496.001]\n\n- rule: Reverse Shell in Container\n  desc: Detects common reverse shell patterns in containers\n  condition: >\n    spawned_process\
+      \ and\n    container and\n    (proc.cmdline contains \"/dev/tcp/\" or\n     proc.cmdline contains \"bash -i\" or\n     (proc.name in (nc, ncat, nmap) and proc.cmdline contains \"-e\"))\n  output: >\n    Reverse shell detected in container\n    (process=%proc.name command=%proc.cmdline\n     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: CRITICAL\n  tags: [mitre_execution, T1059]\n\n- rule: Shell Spawned in Container\n  desc: Detects an interactive shell started inside a container \u2014 a webshell when the parent is the app process (MITRE T1059)\n  condition: >\n    spawned_process and\n    container and\n    proc.name in (shell_binaries)\n  output: >\n    Shell spawned in container\n    (user=%user.name proc=%proc.name parent=%proc.pname cmdline=%proc.cmdline\n     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority:\
+      \ WARNING\n  tags: [mitre_execution, T1059]\n\n- rule: Pod Contacted Cloud Instance Metadata Service\n  desc: Detects a container connecting to the Azure IMDS endpoint to steal the node managed identity and pivot into the subscription (MITRE T1552.005)\n  condition: >\n    outbound and\n    container and\n    fd.sip = \"169.254.169.254\"\n  output: >\n    Container reached cloud metadata endpoint\n    (user=%user.name proc=%proc.name cmdline=%proc.cmdline\n     connection=%fd.name container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: CRITICAL\n  tags: [mitre_credential_access, T1552.005]"

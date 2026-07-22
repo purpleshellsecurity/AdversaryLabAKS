@@ -1,0 +1,11 @@
+apiVersion: v2
+name: falco-lab
+description: Umbrella chart that pins Falco for the AKS Adversary Lab
+type: application
+version: 0.1.0
+# Falco chart version lives HERE now (declarative). Bump this line; Dependabot
+# opens a PR when a new version ships; CI (helm-lint) validates it.
+dependencies:
+  - name: falco
+    version: 9.1.0
+    repository: https://falcosecurity.github.io/charts
