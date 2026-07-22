@@ -371,7 +371,7 @@ function Show-DeploymentSummary {
     Write-ColoredOutput "`n=== Post-Deployment Steps ===" "Yellow"
     Write-ColoredOutput "  1. Deploy Falco:" "White"
     Write-ColoredOutput "     helm repo add falcosecurity https://falcosecurity.github.io/charts" "Cyan"
-    Write-ColoredOutput "     helm install falco falcosecurity/falco -n monitoring -f $repoRoot/helm/falco-values.yaml" "Cyan"
+    Write-ColoredOutput "     helm install falco falcosecurity/falco --version 9.1.0 -n monitoring -f $repoRoot/helm/falco-values.yaml" "Cyan"
     Write-ColoredOutput ""
     Write-ColoredOutput "  2. Deploy red team tools:" "White"
     Write-ColoredOutput "     kubectl apply -f $repoRoot/kubernetes/red-team/red-team-tools.yaml" "Cyan"

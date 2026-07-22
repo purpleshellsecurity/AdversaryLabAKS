@@ -223,10 +223,16 @@ kubectl apply -f kubernetes/red-team/
 
 helm repo add falcosecurity https://falcosecurity.github.io/charts
 helm upgrade --install falco falcosecurity/falco \
+  --version 9.1.0 \
   --namespace monitoring \
   --create-namespace \
   --values helm/falco-values.yaml
 ```
+
+> **Falco chart is pinned** (`--version 9.1.0`) in the deploy commands, `deploy.yaml`,
+> and `validate.yaml` so a maintainer's breaking change can't ambush a deploy or CI run.
+> Bump it deliberately: `helm search repo falcosecurity/falco --versions`, update the pin
+> in those four places, review the chart's `BREAKING-CHANGES.md`, and let `helm-lint` validate the PR.
 
 ---
 

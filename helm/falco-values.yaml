@@ -1,5 +1,5 @@
 # AKS Adversary Lab - Falco Helm Values
-# Deploy: helm install falco falcosecurity/falco -n monitoring -f helm/falco-values.yaml
+# Deploy: helm install falco falcosecurity/falco --version 9.1.0 -n monitoring -f helm/falco-values.yaml
 
 driver:
   kind: modern_ebpf
