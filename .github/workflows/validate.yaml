@@ -131,14 +131,15 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      - name: Validate Falco values
+      - name: Validate Falco chart
         run: |
           helm repo add falcosecurity https://falcosecurity.github.io/charts
-          helm repo update
-          helm template falco falcosecurity/falco \
-            -f helm/falco-values.yaml \
-            --dry-run \
-            > /dev/null && echo "Falco values are valid"
+          helm dependency update helm/falco
+          # Version is declared in helm/falco/Chart.yaml (Dependabot watches it).
+          # Assert the custom rules actually render — catches broken value nesting.
+          helm template falco helm/falco | grep -q "adversary-lab-rules" \
+            && echo "Falco chart valid (custom rules present)" \
+            || { echo "ERROR: rendered chart is missing custom rules"; exit 1; }
 
   detection-validate:
     runs-on: ubuntu-latest

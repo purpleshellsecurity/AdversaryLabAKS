@@ -62,11 +62,11 @@ aks-adversary-lab/
 │   └── victim-apps/
 │
 ├── helm/
-│   └── falco-values.yaml          # Falco Helm values + custom rules
+│   └── falco/                     # Umbrella chart: pins Falco (Chart.yaml) + values.yaml
 │
 ├── detections/                    # Source of truth for all detection content
 │   ├── kql/                       # Microsoft Sentinel analytics rules
-│   └── falco/                     # Falco runtime rules (assembled into falco-values.yaml)
+│   └── falco/                     # Falco runtime rules (assembled into helm/falco/values.yaml)
 │
 ├── attack-simulations/            # Red team scripts mapped to MITRE ATT&CK
 │   ├── token-theft.sh             # T1528
@@ -222,11 +222,17 @@ kubectl apply -f kubernetes/victim-apps/
 kubectl apply -f kubernetes/red-team/
 
 helm repo add falcosecurity https://falcosecurity.github.io/charts
-helm upgrade --install falco falcosecurity/falco \
+helm dependency update helm/falco
+helm upgrade --install falco helm/falco \
   --namespace monitoring \
-  --create-namespace \
-  --values helm/falco-values.yaml
+  --create-namespace
 ```
+
+> **Falco is a pinned chart dependency.** The version lives declaratively in
+> `helm/falco/Chart.yaml` — a single source of truth, not scattered across deploy
+> commands. Dependabot watches it and opens a PR when a new version ships; CI renders
+> the chart and asserts the custom rules are present. To bump manually, edit `version:`
+> in `helm/falco/Chart.yaml`, review the chart's `BREAKING-CHANGES.md`, and let CI validate.
 
 ---
 
@@ -321,7 +327,7 @@ Detection rules in `detections/` are the source of truth — version controlled,
 | `detections/kql/` | `.kql` | Microsoft Sentinel analytics rules |
 | `detections/falco/` | `.yaml` | Falco runtime rules |
 
-Falco rules are assembled from `detections/falco/` into `helm/falco-values.yaml` for deployment. The standalone files exist for validation, diffing, and easier review.
+Falco rules are assembled from `detections/falco/` into `helm/falco/values.yaml` for deployment. The standalone files exist for validation, diffing, and easier review.
 
 ---
 
