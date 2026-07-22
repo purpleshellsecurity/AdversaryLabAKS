@@ -57,7 +57,7 @@ jobs:
     environment: lab
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Validate name prefix
         run: |
@@ -157,7 +157,7 @@ jobs:
     if: github.event.inputs.action == 'deploy'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login
         uses: azure/login@v2
@@ -360,7 +360,7 @@ jobs:
     if: github.event.inputs.action == 'destroy'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login
         uses: azure/login@v2
