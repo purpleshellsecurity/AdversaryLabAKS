@@ -1,0 +1,21 @@
+// ============================================================================
+// Detection: ClusterRole Granting nodes/proxy (Kubelet API Access)
+// MITRE ATT&CK: T1611 - Escape to Host
+// Source: AKSAuditAdmin
+// ============================================================================
+
+// The nodes-proxy technique makes no nodes/proxy API call the audit log can see —
+// the proxy call goes to the kubelet directly. The durable, reliable signal is the
+// RBAC grant: a ClusterRole whose rules include nodes/proxy. mv-apply inspects each rule.
+AKSAuditAdmin
+| where TimeGenerated > ago(1h)
+| where Verb == "create" and ObjectRef.resource == "clusterroles"
+// Tune: the built-in system:prometheus role also grants nodes/proxy, created by aksService.
+| where User.username != "aksService" and User.username !startswith "system:"
+| mv-apply rule = RequestObject.rules on (
+    where set_has_element(rule.resources, "nodes/proxy")   // wildcard "*" roles are caught by privileged-RBAC detections
+    | project Resources = tostring(rule.resources), Verbs = tostring(rule.verbs)
+  )
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
+          ClusterRole = tostring(ObjectRef.name), Resources, Verbs, RequestUri
+| extend MitreTechnique = "T1611"

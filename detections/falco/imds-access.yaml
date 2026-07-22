@@ -1,0 +1,18 @@
+# ============================================================================
+# Falco Rule: Pod Contacted Azure IMDS (Managed-Identity Pivot)
+# MITRE ATT&CK: T1552.005 - Cloud Instance Metadata API
+# ============================================================================
+
+- rule: Pod Contacted Cloud Instance Metadata Service
+  desc: Detects a container connecting to the Azure IMDS endpoint to steal the node managed identity and pivot into the subscription (MITRE T1552.005)
+  condition: >
+    outbound and
+    container and
+    fd.sip = "169.254.169.254"
+  output: >
+    Container reached cloud metadata endpoint
+    (user=%user.name proc=%proc.name cmdline=%proc.cmdline
+     connection=%fd.name container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
+     image=%container.image.repository:%container.image.tag)
+  priority: CRITICAL
+  tags: [mitre_credential_access, T1552.005]

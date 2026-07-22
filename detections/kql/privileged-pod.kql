@@ -1,0 +1,27 @@
+// ============================================================================
+// Detection: Privileged Pod Creation
+// MITRE ATT&CK: T1610 - Deploy Container
+// Source: AKSAuditAdmin
+// ============================================================================
+
+// A pod created with any privileged container. mv-apply inspects EACH container
+// (incl. init/ephemeral), so a single privileged sidecar is caught and named —
+// not just "something in the pod was privileged".
+AKSAuditAdmin
+| where TimeGenerated > ago(1h)
+| where Verb == "create" and ObjectRef.resource == "pods"
+| extend allContainers = array_concat(
+    coalesce(RequestObject.spec.containers,          dynamic([])),
+    coalesce(RequestObject.spec.initContainers,      dynamic([])),
+    coalesce(RequestObject.spec.ephemeralContainers, dynamic([])))
+| mv-apply container = allContainers on (
+    where container.securityContext.privileged == true   // null-safe: unset != true
+    | project ContainerName = tostring(container.name), Image = tostring(container.image)
+  )
+// Tune: AKS system DaemonSets (kube-proxy, CSI node drivers) are legitimately
+// privileged — allowlist kube-system controllers, alert on everyone else.
+| where User.username != "aksService" and User.username !startswith "system:"
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
+          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),
+          ContainerName, Image, RequestUri
+| extend MitreTechnique = "T1610"

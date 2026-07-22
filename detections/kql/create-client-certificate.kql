@@ -1,0 +1,19 @@
+// ============================================================================
+// Detection: Client Certificate Credential via CSR (Self-Approved)
+// MITRE ATT&CK: T1098 - Account Manipulation
+// Source: AKSAuditAdmin
+// ============================================================================
+
+// Minting a client cert through the CSR API. The strong signal is the SAME user
+// both CREATING the CSR and UPDATING its /approval subresource (self-approval) —
+// legitimate flows separate requester from approver.
+AKSAuditAdmin
+| where TimeGenerated > ago(1h)
+| where ObjectRef.resource == "certificatesigningrequests"
+| where (Verb == "create") or (Verb == "update" and ObjectRef.subresource == "approval")
+// Tune: kubelets create CSRs and certificate-controller approves them — both system:*.
+| where User.username !startswith "system:"
+| project TimeGenerated, User = tostring(User.username), Verb,
+          Sub = tostring(ObjectRef.subresource), CSR = tostring(ObjectRef.name), RequestUri
+| sort by TimeGenerated asc   // create then approval from one user = self-signed credential
+| extend MitreTechnique = "T1098"

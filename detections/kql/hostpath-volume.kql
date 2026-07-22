@@ -1,0 +1,23 @@
+// ============================================================================
+// Detection: hostPath Volume Mount (Container Breakout Vector)
+// MITRE ATT&CK: T1611 - Escape to Host
+// Source: AKSAuditAdmin
+// ============================================================================
+
+// A pod mounting a hostPath volume — the container gets a window onto the node
+// filesystem, the classic breakout primitive. mv-apply over spec.volumes, keyed
+// on the hostPath field existing.
+AKSAuditAdmin
+| where TimeGenerated > ago(1h)
+| where Verb == "create" and ObjectRef.resource == "pods"
+| mv-apply volume = RequestObject.spec.volumes on (
+    where isnotempty(volume.hostPath)
+    | project VolumeName = tostring(volume.name), HostPath = tostring(volume.hostPath.path)
+  )
+// Tune: CSI node drivers / monitoring agents legitimately mount hostPath in
+// kube-system — allowlist those, alert on hostPath in workload namespaces.
+| where User.username != "aksService" and User.username !startswith "system:"
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
+          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),
+          VolumeName, HostPath, RequestUri
+| extend MitreTechnique = "T1611"

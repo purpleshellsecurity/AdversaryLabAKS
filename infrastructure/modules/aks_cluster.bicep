@@ -12,6 +12,10 @@ param adminGroupObjectId string
 param authorizedIpRange string
 param enableDefender bool = true
 param enableAzurePolicy bool = true
+// Advanced Container Networking Services (ACNS) — turns on Cilium's Hubble layer
+// for pod-to-pod (east-west) network observability. Requires the Cilium dataplane
+// (already set below). Billed per node-hour; disable to avoid the cost.
+param enableAdvancedNetworking bool = true
 param tags object = {}
 
 var clusterName = '${namePrefix}-aks'
@@ -44,6 +48,16 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2025-03-01' = {
       loadBalancerSku: 'standard'
       outboundType: 'loadBalancer'
       loadBalancerProfile: { managedOutboundIPs: { count: 1 } }
+      // ACNS / Hubble — the pod-to-pod network plane. Observability emits Hubble
+      // flow metrics (to the Managed Prometheus enabled in azureMonitorProfile) and
+      // makes flows queryable. Stored flow logs to Log Analytics (the KQL-queryable
+      // "Container Network Logs") are a SEPARATE follow-on step — see
+      // detections/kql/network-lateral-movement.kql header for enablement notes.
+      advancedNetworking: enableAdvancedNetworking ? {
+        enabled: true
+        observability: { enabled: true }
+        security: { enabled: true }
+      } : null
     }
     securityProfile: {
       workloadIdentity: { enabled: true }
