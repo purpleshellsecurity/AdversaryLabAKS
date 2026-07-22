@@ -1,17 +1,50 @@
 # Security Exceptions
 # Document accepted risk here with justification, approver, and expiration.
-# Expired exceptions will automatically fail the pipeline.
-#
-# Template:
-# - id: EXCEPTION-001
-#   finding: "CVE-XXXX-XXXX or check ID"
-#   tool: "Trivy / Checkov / etc"
-#   severity: "Critical / High / Medium / Low"
-#   file: "path/to/affected/file"
-#   justification: "Why this cannot be fixed right now"
-#   approver: "GitHub username"
-#   approved_date: "YYYY-MM-DD"
-#   expiration_date: "YYYY-MM-DD"
-#   tracking_issue: "https://github.com/org/repo/issues/XXX"
+# The `exception-check` job in validate.yaml WARNS (non-blocking) on any entry
+# whose expiration_date has passed. Use `expiration_date: none` for permanent,
+# by-design lab risks.
 
-exceptions: []
+exceptions:
+  - id: LAB-001
+    finding: "Attacker namespace has unrestricted internet egress (allow-all-egress)"
+    tool: "design-review"
+    severity: "Medium"
+    file: "kubernetes/network-policies/attacker-netpol.yaml"
+    justification: "Reverse-shell, crypto-mining, and IMDS-pivot scenarios require outbound reachability. Contained by the isolated-subscription + teardown-after-use model."
+    approver: "purpleshellsecurity"
+    approved_date: "2026-07-22"
+    expiration_date: none
+    tracking_issue: ""
+
+  - id: LAB-002
+    finding: "Key Vault publicNetworkAccess Enabled / networkAcls defaultAction Allow; no purge protection"
+    tool: "Checkov"
+    severity: "Medium"
+    file: "infrastructure/modules/aks_keyvault.bicep"
+    justification: "Short-lived lab, torn down after use; RBAC auth still gates secret reads. Purge protection intentionally omitted so the disposable lab can reuse the KV name across redeploys."
+    approver: "purpleshellsecurity"
+    approved_date: "2026-07-22"
+    expiration_date: none
+    tracking_issue: ""
+
+  - id: LAB-003
+    finding: "Checkov (IaC) and Trivy (container CVE) run warn-only (non-blocking)"
+    tool: "Checkov / Trivy"
+    severity: "Low"
+    file: ".github/workflows/validate.yaml"
+    justification: "Intentional: the lab ships intentionally-vulnerable IaC and images; a hard gate would block every run. Findings are surfaced for review."
+    approver: "purpleshellsecurity"
+    approved_date: "2026-07-22"
+    expiration_date: none
+    tracking_issue: ""
+
+  - id: LAB-004
+    finding: "CI OIDC identity holds subscription-scope User Access Administrator + Resource Policy Contributor"
+    tool: "design-review"
+    severity: "Medium"
+    file: "tools/setup-oidc.ps1"
+    justification: "Needed to deploy subscription-scope policy definitions and role assignments. The PR-triggered federated credential was REMOVED, so this identity is only reachable via the gated 'lab' environment and push-to-main. Hardening candidate: replace UAA with a scoped custom role."
+    approver: "purpleshellsecurity"
+    approved_date: "2026-07-22"
+    expiration_date: none
+    tracking_issue: ""

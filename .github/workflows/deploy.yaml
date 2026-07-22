@@ -313,7 +313,7 @@ jobs:
       - name: Deploy victim applications
         run: |
           kubectl apply -f kubernetes/victim-apps/
-          kubectl rollout status deployment -n victim-apps --timeout=3m || true
+          kubectl rollout status deployment -n victim --timeout=3m || true
 
       - name: Deploy red team resources
         run: kubectl apply -f kubernetes/red-team/
@@ -423,7 +423,7 @@ jobs:
           echo "Checking for orphaned subscription-scope policy assignments..."
           ASSIGNMENTS=$(az policy assignment list \
             --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --query "[?contains(name, 'aks-adversary')].id" \
+            --query "[?name=='aks-lab-mitre-logging'].id" \
             -o tsv)
 
           if [ -n "$ASSIGNMENTS" ]; then

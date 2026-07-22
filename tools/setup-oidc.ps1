@@ -107,16 +107,14 @@ if ($existingSp) {
 
 Write-Step "Configuring Federated Credentials (OIDC)"
 
+# SECURITY: no `pull_request` federated credential. This identity holds
+# subscription-scope roles, so a PR-triggered workflow must never be able to mint
+# its token. Deploys run only via the gated `lab` environment (created below).
 $federatedCredentials = @(
     @{
         Name        = "github-push-main"
         Subject     = "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${MainBranch}"
         Description = "GitHub Actions — push to $MainBranch"
-    }
-    @{
-        Name        = "github-pull-request"
-        Subject     = "repo:${GitHubOrg}/${GitHubRepo}:pull_request"
-        Description = "GitHub Actions — pull requests"
     }
     @{
         Name        = "github-environment-lab"
@@ -168,6 +166,9 @@ $roleAssignments = @(
         Description = "Deploy/manage lab resources in resource group"
     }
     @{
+        # HARDENING CANDIDATE (see security-exceptions.yaml LAB-004): subscription-scope
+        # UAA is Owner-equivalent for role grants. Kept because the Bicep creates role
+        # assignments during deploy; replace with a scoped custom role when practical.
         Role        = "User Access Administrator"
         Scope       = "/subscriptions/$subscriptionId"
         Description = "Required for policy assignments and role assignments in Bicep"
