@@ -300,6 +300,7 @@ jobs:
           helm repo add falcosecurity https://falcosecurity.github.io/charts
           helm repo update
           helm upgrade --install falco falcosecurity/falco \
+            --version 9.1.0 \
             --namespace monitoring \
             --create-namespace \
             --values helm/falco-values.yaml \

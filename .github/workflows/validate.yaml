@@ -135,7 +135,9 @@ jobs:
         run: |
           helm repo add falcosecurity https://falcosecurity.github.io/charts
           helm repo update
+          # Falco chart pinned — bump deliberately (see README). Latest: helm search repo falcosecurity/falco --versions
           helm template falco falcosecurity/falco \
+            --version 9.1.0 \
             -f helm/falco-values.yaml \
             --dry-run \
             > /dev/null && echo "Falco values are valid"
