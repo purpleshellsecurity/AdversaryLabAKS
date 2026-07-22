@@ -26,3 +26,16 @@ updates:
       - python
     commit-message:
       prefix: "chore(deps)"
+
+  # Helm — tracks the pinned Falco chart in helm/falco/Chart.yaml
+  - package-ecosystem: helm
+    directory: /helm/falco
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - helm
+    commit-message:
+      prefix: "chore(deps)"

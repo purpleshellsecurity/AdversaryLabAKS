@@ -298,12 +298,10 @@ jobs:
       - name: Deploy Falco
         run: |
           helm repo add falcosecurity https://falcosecurity.github.io/charts
-          helm repo update
-          helm upgrade --install falco falcosecurity/falco \
-            --version 9.1.0 \
+          helm dependency update helm/falco
+          helm upgrade --install falco helm/falco \
             --namespace monitoring \
             --create-namespace \
-            --values helm/falco-values.yaml \
             --wait \
             --timeout 10m \
             || echo "⚠️  Falco install timed out — check 'kubectl get pods -n monitoring' after deploy"
