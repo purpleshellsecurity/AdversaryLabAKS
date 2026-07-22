@@ -186,6 +186,25 @@ jobs:
         # -ll = only medium severity and above
         # Switch to CodeQL when repo goes public (requires GHAS on private repos)
 
+  exception-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Warn on expired security exceptions (non-blocking)
+        run: python3 tools/check-exceptions.py
+
   # ── Stage 2: IaC scanning (needs bicep-validate) ─────────────────────────
 
   iac-scan:

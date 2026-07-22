@@ -217,13 +217,14 @@ def run_validation(detections_dir: str) -> tuple[int, int]:
     base = Path(detections_dir)
     results = []
 
-    # Validate KQL files
-    kql_dir = base / "kql"
-    if kql_dir.exists():
-        for kql_file in sorted(kql_dir.glob("*.kql")):
+    # Validate KQL files: the kql/ library AND deployed technique-folder query.kql
+    # (test.kql helper queries are intentionally excluded).
+    kql_files = sorted(base.glob("kql/*.kql")) + sorted(base.glob("*/query.kql"))
+    if kql_files:
+        for kql_file in kql_files:
             results.append(validate_kql_file(kql_file))
     else:
-        log.warning("No kql/ directory found under %s", detections_dir)
+        log.warning("No .kql files found under %s", detections_dir)
 
     # Validate Falco files
     falco_dir = base / "falco"

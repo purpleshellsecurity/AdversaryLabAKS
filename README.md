@@ -19,7 +19,7 @@ Extension of [Adversary Lab](https://github.com/purpleshellsecurity/adversary_la
 | **Defender for Containers** | eBPF sensor for runtime detection (optional) |
 | **Azure Policy Initiative** | 10 policies (5 custom + 5 built-in) at subscription scope |
 | **Azure Container Registry** | Standard SKU, AcrPull role for AKS kubelet identity |
-| **Key Vault** | RBAC auth, purge protection, network deny-by-default |
+| **Key Vault** | RBAC auth, soft-delete (7d); public network — accepted lab risk (see docs/security-exceptions.yaml LAB-002) |
 | **Falco** | Runtime security via Helm, custom syscall-based rules |
 | **Red Team Tools** | kdigger, CDK, Peirates, kubectl, nmap, curl — in `attacker` namespace |
 | **Victim Apps** | Juice Shop, DVWA, vulnerable API, intentional misconfigs |
