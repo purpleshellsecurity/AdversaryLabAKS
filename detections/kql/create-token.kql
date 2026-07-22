@@ -1,0 +1,18 @@
+// ============================================================================
+// Detection: Long-Lived Service Account Token Minted
+// MITRE ATT&CK: T1098 - Account Manipulation
+// Source: AKSAuditAdmin
+// ============================================================================
+
+// Minting a token via the TokenRequest API (serviceaccounts/token), especially
+// for an existing privileged kube-system SA such as clusterrole-aggregation-controller.
+// NOTE: nodes-proxy also mints a token — tell them apart by the target SA:
+//       an existing privileged kube-system SA = this; a fresh purpose-built SA = nodes-proxy.
+AKSAuditAdmin
+| where TimeGenerated > ago(1h)
+| where Verb == "create" and ObjectRef.resource == "serviceaccounts" and ObjectRef.subresource == "token"
+// Tune: kubelets (system:node:*) mint projected tokens constantly — allowlist them.
+| where User.username != "aksService" and User.username !startswith "system:"
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
+          Namespace = tostring(ObjectRef.namespace), ServiceAccount = tostring(ObjectRef.name), RequestUri
+| extend MitreTechnique = "T1098"

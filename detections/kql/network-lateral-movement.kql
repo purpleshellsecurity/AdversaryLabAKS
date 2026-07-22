@@ -1,0 +1,37 @@
+// ============================================================================
+// Detection: Unexpected East-West (Pod-to-Pod) Network Flow
+// MITRE ATT&CK: T1046 - Network Service Discovery
+// Source: Container Network Logs (ACNS / Hubble)  [TEMPLATE — see notes below]
+// ============================================================================
+//
+// STATUS: TEMPLATE / UNVERIFIED. This is the network-plane complement to
+// lateral-movement.kql (which is audit/token-based). It requires the pod-to-pod
+// flow-log plane, which is NOT enabled by default.
+//
+// ENABLEMENT (two steps):
+//   1. ACNS observability — set in infrastructure/modules/aks_cluster.bicep
+//      (networkProfile.advancedNetworking.observability). This turns on Hubble.
+//   2. Stored "Container Network Logs" → Log Analytics — a SEPARATE, newer AKS
+//      feature (flow logs land in a resource-specific table, queryable with KQL).
+//      Its enablement path and exact TABLE NAME + SCHEMA are evolving — CONFIRM
+//      against current AKS docs and a captured sample before trusting this query.
+//      The table below is a placeholder; adjust field names to the real schema.
+//
+// Once real flow-log data exists, capture a sample and tune this exactly the way
+// the audit detections were tuned — the field paths here are best-effort, not verified.
+//
+// Idea: an attacker moving laterally opens NEW cross-namespace pod-to-pod flows —
+// connections between namespaces that normally never talk. Baseline the legitimate
+// pairs first, then alert on the rest.
+
+// CONFIRM the table name once Container Network Logs are enabled (placeholder):
+RetinaNetworkFlowLogs
+| where TimeGenerated > ago(1h)
+| where FlowType == "L3_L4"            // adjust to real schema
+| where Verdict == "FORWARDED"
+| where SourceNamespace != DestinationNamespace          // cross-namespace = east-west
+| where SourceNamespace !in ("kube-system", "gatekeeper-system")   // baseline / allowlist
+| summarize Flows = count(), Ports = make_set(DestinationPort)
+        by SourceNamespace, SourcePod = SourcePodName,
+           DestinationNamespace, DestinationPod = DestinationPodName, bin(TimeGenerated, 5m)
+| extend MitreTechnique = "T1046"
