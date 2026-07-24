@@ -329,6 +329,11 @@ Detection rules in `detections/` are the source of truth — version controlled,
 
 Falco rules are assembled from `detections/falco/` into `helm/falco/values.yaml` for deployment. The standalone files exist for validation, diffing, and easier review.
 
+Every detection is mapped to a MITRE technique and a trigger script in the
+[detection coverage matrix](docs/DETECTION-COVERAGE.md) (with a color-coded
+[ATT&CK Navigator layer](docs/attack-navigator-layer.json)). New to the detections?
+Start with the [beginner's walkthrough](docs/DETECTIONS-FOR-BEGINNERS.md).
+
 ---
 
 ## Additional Resources
