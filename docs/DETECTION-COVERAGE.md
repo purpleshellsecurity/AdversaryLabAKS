@@ -33,13 +33,14 @@ data. Only a fired attack proves a detection.
 
 > **Reality check (2026-07):** the CI now runs two things — a *structure* check
 > (`validate.py`) and a **Tier 1 logic test** (`kql_test.py`) that executes the real
-> `.kql` against recorded fixtures in the Kusto emulator on every PR. Current state:
-> **7 KQL rules Proven at Tier 1** (privileged-pod, hostpath-volume, nodes-proxy-grant,
-> dump-secrets, create-token, create-client-certificate, cluster-role-binding), the
-> two log-string backstops **logic-tested** (still Backstop — see gaps), lateral-movement
-> **partially** tested (still Draft — the FP allowlist isn't covered), and the **6 Falco
-> rules still Sound** (they need the Tier 2 `kind` harness, not yet built). Tier 3
-> (live AKS end-to-end) is still a follow-up.
+> `.kql` against recorded fixtures in the Kusto emulator, **and** a Tier 2 harness
+> that runs the real Falco rules against live syscalls — both on every PR. Current
+> state: **8 KQL rules Proven at Tier 1** (privileged-pod, hostpath-volume,
+> nodes-proxy-grant, dump-secrets, create-token, create-client-certificate,
+> cluster-role-binding, lateral-movement), **6 Falco rules Proven at Tier 2** (shell,
+> reverse-shell, token-theft, imds, container-escape, crypto-mining), the two
+> log-string backstops **logic-tested** (still Backstop — see gaps), and one Template.
+> Tier 3 (live AKS end-to-end) is still a follow-up.
 
 ---
 
@@ -55,7 +56,7 @@ data. Only a fired attack proves a detection.
 | Persistence | **T1098** Account Manipulation | `kql/create-token.kql` | `AKSAuditAdmin` | `attack-simulations/create-token.sh` | ✔ | ✅ Proven (Tier 1) |
 | Persistence | **T1098** Account Manipulation | `kql/create-client-certificate.kql` | `AKSAuditAdmin` | `attack-simulations/create-client-certificate.sh` | ✔ | ✅ Proven (Tier 1) |
 | Persistence | **T1098.006** Additional Cluster Roles | `T1098.006-cluster-role-binding/query.kql` | `AKSAudit` | `T1098.006-cluster-role-binding/attack.sh` + Tier 1 test | ✔ | ✅ Proven (Tier 1) |
-| Lateral Movement | **T1550.001** Application Access Token | `kql/lateral-movement.kql` | `AKSAudit` | `attack-simulations/lateral-movement.sh` | ✘ | 🟨 Draft (Tier 1 partial) |
+| Lateral Movement | **T1550.001** Application Access Token | `kql/lateral-movement.kql` | `AKSAudit` | `attack-simulations/lateral-movement.sh` | ✘ | ✅ Proven (Tier 1) |
 | Discovery | **T1046** Network Service Discovery | `kql/network-lateral-movement.kql` | *(ACNS/Hubble flow logs)* | — *(requires flow-log plane)* | ✘ | ⬜ Template |
 | Impact | **T1496** Resource Hijacking | `kql/crypto-mining.kql` | `ContainerLogV2` | `attack-simulations/crypto-mining.sh` | ✘ | 🟧 Backstop (Tier 1 logic) |
 | Privilege Escalation | **T1611** Escape to Host | `kql/container-escape.kql` | `ContainerLogV2` | `attack-simulations/container-escape.sh` | ✘ | 🟧 Backstop (Tier 1 logic) |
@@ -64,12 +65,12 @@ data. Only a fired attack proves a detection.
 
 | Tactic | Technique | Detection | Priority | Trigger script | Maturity |
 |--------|-----------|-----------|----------|----------------|:--------:|
-| Execution | **T1059** Command & Scripting Interpreter | `falco/shell-in-container.yaml` | WARNING | `attack-simulations/shell-in-container.sh` | 🟩 Sound |
-| Execution | **T1059** Command & Scripting Interpreter | `falco/reverse-shell.yaml` | CRITICAL | `attack-simulations/reverse-shell.sh` | 🟩 Sound |
-| Credential Access | **T1528** Steal Application Access Token | `falco/token-theft.yaml` | WARNING | `attack-simulations/token-theft.sh` | 🟩 Sound |
-| Credential Access | **T1552.005** Cloud Instance Metadata API | `falco/imds-access.yaml` | CRITICAL | `attack-simulations/imds-access.sh` | 🟩 Sound |
-| Privilege Escalation | **T1611** Escape to Host | `falco/container-escape.yaml` | CRITICAL | `attack-simulations/container-escape.sh` | 🟩 Sound |
-| Impact | **T1496.001** Compute Hijacking | `falco/crypto-mining.yaml` | CRITICAL | `attack-simulations/crypto-mining.sh` | 🟩 Sound |
+| Execution | **T1059** Command & Scripting Interpreter | `falco/shell-in-container.yaml` | WARNING | `attack-simulations/shell-in-container.sh` | ✅ Proven (Tier 2) |
+| Execution | **T1059** Command & Scripting Interpreter | `falco/reverse-shell.yaml` | CRITICAL | `attack-simulations/reverse-shell.sh` | ✅ Proven (Tier 2) |
+| Credential Access | **T1528** Steal Application Access Token | `falco/token-theft.yaml` | WARNING | `attack-simulations/token-theft.sh` | ✅ Proven (Tier 2) |
+| Credential Access | **T1552.005** Cloud Instance Metadata API | `falco/imds-access.yaml` | CRITICAL | `attack-simulations/imds-access.sh` | ✅ Proven (Tier 2) |
+| Privilege Escalation | **T1611** Escape to Host | `falco/container-escape.yaml` | CRITICAL | `attack-simulations/container-escape.sh` | ✅ Proven (Tier 2) |
+| Impact | **T1496.001** Compute Hijacking | `falco/crypto-mining.yaml` | CRITICAL | `attack-simulations/crypto-mining.sh` | ✅ Proven (Tier 2) |
 
 ---
 
@@ -108,15 +109,16 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=falco --tail=50 | grep -i "
 
 ## Proving detections in CI (what actually runs)
 
-"Maturity" above is only meaningful if something *checks* it. There are three
-levels of automated proof, cheapest first. Today the repo runs level 0 for
-everything and **level 1 for `privileged-pod`**.
+"Maturity" above is only meaningful if something *checks* it. There are four
+levels of automated proof, cheapest first. Today the repo runs levels 0–2 on
+every PR; only level 3 (live cloud) is still a follow-up.
 
 | Level | What runs | Proves | Cost | Cadence |
 |-------|-----------|--------|------|---------|
 | **0 — structure** | `tools/detection-validator/validate.py` | the rule is well-formed (has MITRE tag, time filter, required fields) | free | every PR |
-| **1 — logic (Tier 1)** | `tools/detection-tester/kql_test.py` against the **Kusto emulator** | the real `.kql` fires on a recorded malicious event and stays silent on a benign one | free | every PR — **10 KQL rules covered** |
-| **2 — end-to-end (Tier 3)** | deploy AKS + run `attack-simulations/*.sh` + query Log Analytics | the live attack, in a real cluster, actually trips the detection | ~$ + ~20 min | nightly / manual |
+| **1 — KQL logic (Tier 1)** | `tools/detection-tester/kql_test.py` against the **Kusto emulator** | the real `.kql` fires on a recorded malicious event and stays silent on a benign one | free | every PR — **10 KQL rules covered** |
+| **2 — Falco runtime (Tier 2)** | `tools/detection-tester/falco_test.py` with **Falco (modern eBPF)** | the real Falco rule fires on live syscalls from a safe trigger container | free | every PR — **6 Falco rules covered** |
+| **3 — end-to-end (Tier 3)** | deploy AKS + run `attack-simulations/*.sh` + query Log Analytics | the live attack, in a real cluster, actually trips the detection | ~$ + ~20 min | nightly / manual |
 
 ### How the Tier 1 logic test works
 
@@ -152,23 +154,34 @@ fixture. A malicious fixture must return > 0 rows; a benign one must return 0.
 > real event shape rather than an assumption. That is what makes Tier 1 trustworthy
 > as a stand-in for the full end-to-end test.
 
+### How the Tier 2 Falco runtime test works
+
+There is no faithful *offline* Falco engine — a syscall rule can only be proven by
+generating the syscalls. So the `falco-runtime-test` job runs **real Falco** (modern
+eBPF) on the runner with the repo's rules mounted into `/etc/falco/rules.d`, then
+`tools/detection-tester/falco_test.py` fires one **safe** trigger container per rule
+(a refused reverse shell, a `stratum+tcp` echo, a fake token read, …) and asserts the
+expected `rule:` name appears in Falco's JSON output (read via `docker logs`).
+
+Add a rule to it the same way as Tier 1: drop a `detections/falco/tests/<rule>/test.json`
+with `image`, `cmd`, and `expect_rule`. **Gotcha:** Falco emits only the *first*
+matching rule per event, so a built-in rule can pre-empt yours (this is why the
+crypto trigger uses the `stratum+tcp` cmdline branch, not a renamed binary — the
+renamed binary is claimed by the built-in "Drop and execute new binary" rule).
+
 ## Coverage gaps (read before you trust the green)
 
 Honesty column — what this matrix does **not** yet claim:
 
-1. **Tier 1 proves LOGIC, not the live pipeline.** 7 KQL rules pass an automated
-   logic test on every PR (fires on the recorded attack event, silent on benign).
-   That is real regression protection, but it asserts the query is correct against a
-   *recorded* event — it does not prove the live attack still produces that event, or
-   that AKS ingests it. Only a Tier 3 live run proves the full pipeline. The **6 Falco
-   rules are not covered by Tier 1 at all** (they're syscall rules — they need the
-   Tier 2 `kind` harness, still to build).
-2. **`lateral-movement.kql` (🟨) has no allowlist.** It fires on any cross-namespace
-   service-account use, including legitimate `kube-system` controllers — expect heavy
-   false positives until baselined. See [`DETECTION-TUNING.md`](./DETECTION-TUNING.md).
-3. **The two `ContainerLogV2` log-string rules (🟧)** — `crypto-mining.kql` and
-   `container-escape.kql` — are evadable (rename the binary / stay quiet) and
-   duplicate techniques Falco catches at the syscall level. `container-escape.kql`
-   in particular may not fire from `container-escape.sh` at all. Trust the Falco rule.
-4. **`network-lateral-movement.kql` (⬜)** cannot run until ACNS/Hubble Container
+1. **Tier 1/2 prove LOGIC + runtime, not the live cloud pipeline.** 8 KQL rules pass
+   a logic test and 6 Falco rules pass a live-syscall test on every PR — real
+   regression protection. But Tier 1 asserts the query is correct against a *recorded*
+   event (not that the live attack still produces it, or that AKS ingests it), and
+   Tier 2 proves the Falco rule fires on syscalls but without the real K8s metadata
+   fields. Only a **Tier 3** live run proves the full cloud pipeline — still a follow-up.
+2. **The two `ContainerLogV2` log-string rules (🟧) stay Backstop even though
+   logic-tested.** `crypto-mining.kql` and `container-escape.kql` are evadable (rename
+   the binary / stay quiet) and duplicate techniques Falco now catches end-to-end at
+   the syscall level — trust the Falco rule; these are the safety net.
+3. **`network-lateral-movement.kql` (⬜)** cannot run until ACNS/Hubble Container
    Network Logs are enabled and its placeholder table/schema are confirmed.

@@ -27,7 +27,7 @@
     {
       "techniqueID": "T1611",
       "score": 100,
-      "comment": "PROVEN (Tier 1) — kql/hostpath-volume.kql, kql/nodes-proxy-grant.kql | SOUND falco/container-escape.yaml | BACKSTOP kql/container-escape.kql | triggers + fixtures | Stratus (KQL)",
+      "comment": "PROVEN — kql/hostpath-volume.kql, kql/nodes-proxy-grant.kql (Tier 1); falco/container-escape.yaml (Tier 2 live syscall) | BACKSTOP kql/container-escape.kql | triggers + fixtures | Stratus (KQL)",
       "enabled": true
     },
     {
@@ -50,8 +50,8 @@
     },
     {
       "techniqueID": "T1550.001",
-      "score": 40,
-      "comment": "DRAFT — kql/lateral-movement.kql (no allowlist yet — noisy) | trigger: lateral-movement.sh | non-Stratus",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — kql/lateral-movement.kql (infra_source_ns allowlist; logic test covers cross-ns fire + kube-system suppression) | trigger: lateral-movement.sh | non-Stratus",
       "enabled": true
     },
     {
@@ -62,32 +62,32 @@
     },
     {
       "techniqueID": "T1496",
-      "score": 75,
-      "comment": "SOUND (Falco) — falco/crypto-mining.yaml | BACKSTOP kql/crypto-mining.kql (log-string, evadable) | trigger: crypto-mining.sh",
+      "score": 100,
+      "comment": "PROVEN (Tier 2) — falco/crypto-mining.yaml (live-syscall test) | BACKSTOP kql/crypto-mining.kql (log-string, evadable) | trigger: crypto-mining.sh",
       "enabled": true
     },
     {
       "techniqueID": "T1496.001",
-      "score": 75,
-      "comment": "SOUND — falco/crypto-mining.yaml | trigger: crypto-mining.sh",
+      "score": 100,
+      "comment": "PROVEN (Tier 2) — falco/crypto-mining.yaml (live-syscall test) | trigger: crypto-mining.sh",
       "enabled": true
     },
     {
       "techniqueID": "T1059",
-      "score": 75,
-      "comment": "SOUND — falco/shell-in-container.yaml (WARNING), falco/reverse-shell.yaml (CRITICAL) | triggers: shell-in-container.sh, reverse-shell.sh",
+      "score": 100,
+      "comment": "PROVEN (Tier 2) — falco/shell-in-container.yaml (WARNING), falco/reverse-shell.yaml (CRITICAL), live-syscall test | triggers: shell-in-container.sh, reverse-shell.sh",
       "enabled": true
     },
     {
       "techniqueID": "T1528",
-      "score": 75,
-      "comment": "SOUND — falco/token-theft.yaml | trigger: token-theft.sh",
+      "score": 100,
+      "comment": "PROVEN (Tier 2) — falco/token-theft.yaml (live-syscall test) | trigger: token-theft.sh",
       "enabled": true
     },
     {
       "techniqueID": "T1552.005",
-      "score": 75,
-      "comment": "SOUND — falco/imds-access.yaml | trigger: imds-access.sh",
+      "score": 100,
+      "comment": "PROVEN (Tier 2) — falco/imds-access.yaml (live-syscall test) | trigger: imds-access.sh",
       "enabled": true
     }
   ],
