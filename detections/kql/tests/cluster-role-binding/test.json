@@ -1,0 +1,18 @@
+{
+  "rule": "detections/T1098.006-cluster-role-binding/query.kql",
+  "table": "AKSAudit",
+  "inject_timegenerated": true,
+  "schema": [
+    { "name": "Stage", "type": "string" },
+    { "name": "Verb", "type": "string" },
+    { "name": "User", "type": "dynamic" },
+    { "name": "ObjectRef", "type": "dynamic" },
+    { "name": "ResponseStatus", "type": "dynamic" },
+    { "name": "SourceIps", "type": "dynamic" },
+    { "name": "UserAgent", "type": "string" }
+  ],
+  "cases": [
+    { "name": "human binds cluster-admin (2xx) fires", "fixture": "malicious.json", "expect": "match" },
+    { "name": "system: controller binding and denied (403) attempt stay silent", "fixture": "benign.json", "expect": "no_match" }
+  ]
+}

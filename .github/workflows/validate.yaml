@@ -164,6 +164,44 @@ jobs:
             --detections-dir detections \
             --verbose
 
+  # ── Tier 1: detection LOGIC test (offline, no cloud) ─────────────────────
+  # Runs each real .kql against recorded event fixtures inside the Kusto emulator
+  # and asserts it fires on the malicious sample and stays silent on the benign
+  # one. Proves the query LOGIC end-to-end without an AKS cluster or Log Analytics.
+  detection-logic-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      kusto:
+        image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+        ports:
+          - 8080:8080
+        env:
+          ACCEPT_EULA: "Y"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r tools/detection-tester/requirements.txt
+
+      - name: Run KQL detection logic tests
+        env:
+          KUSTO_ENDPOINT: http://localhost:8080
+          KUSTO_DB: NetDefaultDB
+        run: |
+          python tools/detection-tester/kql_test.py \
+            --tests-dir detections/kql/tests \
+            --repo-root . \
+            --wait-seconds 180
+
   python-sast:
     runs-on: ubuntu-latest
     timeout-minutes: 10

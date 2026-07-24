@@ -1,0 +1,10 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "attacker@corp.com" },
+    "ObjectRef": { "resource": "clusterroles", "name": "sneaky-node-access" },
+    "RequestObject": { "rules": [ { "apiGroups": [""], "resources": ["nodes/proxy"], "verbs": ["get", "create"] } ] },
+    "SourceIps": ["10.1.2.3"],
+    "RequestUri": "/apis/rbac.authorization.k8s.io/v1/clusterroles"
+  }
+]

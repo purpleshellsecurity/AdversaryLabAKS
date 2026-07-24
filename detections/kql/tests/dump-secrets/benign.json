@@ -1,0 +1,16 @@
+[
+  {
+    "Verb": "list",
+    "User": { "username": "developer@corp.com" },
+    "ObjectRef": { "resource": "secrets", "namespace": "victim" },
+    "SourceIps": ["10.1.2.4"],
+    "RequestUri": "/api/v1/namespaces/victim/secrets"
+  },
+  {
+    "Verb": "list",
+    "User": { "username": "system:serviceaccount:kube-system:generic-garbage-collector" },
+    "ObjectRef": { "resource": "secrets" },
+    "SourceIps": ["10.1.0.6"],
+    "RequestUri": "/api/v1/secrets"
+  }
+]

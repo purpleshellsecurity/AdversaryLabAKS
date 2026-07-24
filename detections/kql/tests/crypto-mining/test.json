@@ -1,0 +1,16 @@
+{
+  "rule": "detections/kql/crypto-mining.kql",
+  "table": "ContainerLogV2",
+  "inject_timegenerated": true,
+  "note": "Tier 1 proves the log-string match works. It does NOT fix the real weakness (an attacker who renames the binary or stays quiet prints nothing) — this rule stays 'Backstop' behind the Falco syscall rule.",
+  "schema": [
+    { "name": "LogMessage", "type": "string" },
+    { "name": "PodName", "type": "string" },
+    { "name": "PodNamespace", "type": "string" },
+    { "name": "ContainerName", "type": "string" }
+  ],
+  "cases": [
+    { "name": "xmrig pool string in logs fires", "fixture": "malicious.json", "expect": "match" },
+    { "name": "ordinary application log is silent", "fixture": "benign.json", "expect": "no_match" }
+  ]
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "system:node:aks-nodepool1-12345" },
+    "ObjectRef": { "resource": "serviceaccounts", "subresource": "token", "namespace": "default", "name": "default" },
+    "SourceIps": ["10.1.0.7"],
+    "RequestUri": "/api/v1/namespaces/default/serviceaccounts/default/token"
+  },
+  {
+    "Verb": "create",
+    "User": { "username": "developer@corp.com" },
+    "ObjectRef": { "resource": "serviceaccounts", "namespace": "victim", "name": "build-bot" },
+    "SourceIps": ["10.1.2.8"],
+    "RequestUri": "/api/v1/namespaces/victim/serviceaccounts"
+  }
+]

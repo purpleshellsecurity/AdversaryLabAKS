@@ -30,3 +30,7 @@ Thumbs.db
 # Editor
 .vscode/settings.json
 *.swp
+
+# Python bytecode
+__pycache__/
+*.pyc

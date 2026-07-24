@@ -1,0 +1,14 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "attacker@corp.com" },
+    "ObjectRef": { "resource": "certificatesigningrequests", "name": "adversary-lab-csr-1" },
+    "RequestUri": "/apis/certificates.k8s.io/v1/certificatesigningrequests"
+  },
+  {
+    "Verb": "update",
+    "User": { "username": "attacker@corp.com" },
+    "ObjectRef": { "resource": "certificatesigningrequests", "subresource": "approval", "name": "adversary-lab-csr-1" },
+    "RequestUri": "/apis/certificates.k8s.io/v1/certificatesigningrequests/adversary-lab-csr-1/approval"
+  }
+]

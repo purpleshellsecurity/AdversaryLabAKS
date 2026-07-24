@@ -1,0 +1,110 @@
+{
+  "name": "AKS Adversary Lab — Detection Coverage",
+  "versions": {
+    "attack": "16",
+    "navigator": "5.1.0",
+    "layer": "4.5"
+  },
+  "domain": "enterprise-attack",
+  "description": "Detection coverage for the AKS Adversary Lab. Score = detection maturity: 100 Proven (CI test asserts it fires), 60 Proof-ready (test artifacts exist but not run by CI), 75 Sound (documented signal + trigger script), 40 Draft (needs tuning), 10 Backstop/Template (weak or non-functional). See docs/DETECTION-COVERAGE.md.",
+  "filters": {
+    "platforms": ["Containers", "IaaS", "Azure AD"]
+  },
+  "sorting": 0,
+  "layout": {
+    "layout": "side",
+    "showID": true,
+    "showName": true
+  },
+  "hideDisabled": false,
+  "techniques": [
+    {
+      "techniqueID": "T1610",
+      "score": 100,
+      "comment": "PROVEN (Tier 1 logic test) — kql/privileged-pod.kql | trigger: privileged-pod.sh | fixtures + CI test | Stratus",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1611",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — kql/hostpath-volume.kql, kql/nodes-proxy-grant.kql | SOUND falco/container-escape.yaml | BACKSTOP kql/container-escape.kql | triggers + fixtures | Stratus (KQL)",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1552.007",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — kql/dump-secrets.kql | SOUND create pods/exec | triggers: dump-secrets.sh, pod-exec.sh | Stratus",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1098",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — kql/create-token.kql, kql/create-client-certificate.kql | triggers + fixtures | Stratus",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1098.006",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — T1098.006-cluster-role-binding/query.kql (attack.sh + fixtures, logic test in CI) | Stratus",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1550.001",
+      "score": 40,
+      "comment": "DRAFT — kql/lateral-movement.kql (no allowlist yet — noisy) | trigger: lateral-movement.sh | non-Stratus",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1046",
+      "score": 10,
+      "comment": "TEMPLATE — kql/network-lateral-movement.kql (needs ACNS/Hubble flow logs; schema unverified) | non-Stratus",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1496",
+      "score": 75,
+      "comment": "SOUND (Falco) — falco/crypto-mining.yaml | BACKSTOP kql/crypto-mining.kql (log-string, evadable) | trigger: crypto-mining.sh",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1496.001",
+      "score": 75,
+      "comment": "SOUND — falco/crypto-mining.yaml | trigger: crypto-mining.sh",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1059",
+      "score": 75,
+      "comment": "SOUND — falco/shell-in-container.yaml (WARNING), falco/reverse-shell.yaml (CRITICAL) | triggers: shell-in-container.sh, reverse-shell.sh",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1528",
+      "score": 75,
+      "comment": "SOUND — falco/token-theft.yaml | trigger: token-theft.sh",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1552.005",
+      "score": 75,
+      "comment": "SOUND — falco/imds-access.yaml | trigger: imds-access.sh",
+      "enabled": true
+    }
+  ],
+  "gradient": {
+    "colors": ["#d32f2f", "#fbc02d", "#388e3c"],
+    "minValue": 0,
+    "maxValue": 100
+  },
+  "legendItems": [
+    { "label": "Proven (100) — CI test asserts it fires", "color": "#388e3c" },
+    { "label": "Sound (75) — documented signal + trigger script", "color": "#7cb342" },
+    { "label": "Proof-ready (60) — test artifacts exist, not yet run by CI", "color": "#c0ca33" },
+    { "label": "Draft (40) — real signal, needs tuning", "color": "#fbc02d" },
+    { "label": "Backstop/Template (10) — weak or non-functional", "color": "#d32f2f" }
+  ],
+  "showTacticRowBackground": true,
+  "tacticRowBackground": "#205b8f",
+  "selectTechniquesAcrossTactics": true,
+  "selectSubtechniquesWithParent": false
+}

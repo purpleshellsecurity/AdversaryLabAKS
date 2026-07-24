@@ -1,0 +1,9 @@
+[
+  {
+    "Verb": "list",
+    "User": { "username": "attacker@corp.com" },
+    "ObjectRef": { "resource": "secrets" },
+    "SourceIps": ["10.1.2.3"],
+    "RequestUri": "/api/v1/secrets"
+  }
+]

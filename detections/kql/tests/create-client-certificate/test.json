@@ -1,0 +1,15 @@
+{
+  "rule": "detections/kql/create-client-certificate.kql",
+  "table": "AKSAuditAdmin",
+  "inject_timegenerated": true,
+  "schema": [
+    { "name": "Verb", "type": "string" },
+    { "name": "User", "type": "dynamic" },
+    { "name": "ObjectRef", "type": "dynamic" },
+    { "name": "RequestUri", "type": "string" }
+  ],
+  "cases": [
+    { "name": "human create + self-approval of CSR fires", "fixture": "malicious.json", "expect": "match" },
+    { "name": "kubelet create and certificate-controller approval stay silent", "fixture": "benign.json", "expect": "no_match" }
+  ]
+}

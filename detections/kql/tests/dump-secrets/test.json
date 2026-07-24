@@ -1,0 +1,16 @@
+{
+  "rule": "detections/kql/dump-secrets.kql",
+  "table": "AKSAudit",
+  "inject_timegenerated": true,
+  "schema": [
+    { "name": "Verb", "type": "string" },
+    { "name": "User", "type": "dynamic" },
+    { "name": "ObjectRef", "type": "dynamic" },
+    { "name": "SourceIps", "type": "dynamic" },
+    { "name": "RequestUri", "type": "string" }
+  ],
+  "cases": [
+    { "name": "human cluster-wide secret list fires", "fixture": "malicious.json", "expect": "match" },
+    { "name": "namespaced read and system: controller stay silent", "fixture": "benign.json", "expect": "no_match" }
+  ]
+}
