@@ -31,12 +31,15 @@ data. Only a fired attack proves a detection.
 | 🟧 **Backstop** | Weak / evadable; exists as a secondary net behind a stronger rule for the same technique. |
 | ⬜ **Template** | Non-functional until a data source is enabled; schema unverified. |
 
-> **Reality check (2026-07):** today the CI (`validate.yaml`) only checks rule
-> *structure* — it never runs an attack or a query against data. So the honest
-> current state is **1 Proven** (`privileged-pod`, via the new offline logic test),
-> **1 Proof-ready** (`T1098.006` — has the ingredients, not yet wired), and the
-> rest Sound or below. The [Proving detections in CI](#proving-detections-in-ci-what-actually-runs)
-> section explains the harness that changes this.
+> **Reality check (2026-07):** the CI now runs two things — a *structure* check
+> (`validate.py`) and a **Tier 1 logic test** (`kql_test.py`) that executes the real
+> `.kql` against recorded fixtures in the Kusto emulator on every PR. Current state:
+> **7 KQL rules Proven at Tier 1** (privileged-pod, hostpath-volume, nodes-proxy-grant,
+> dump-secrets, create-token, create-client-certificate, cluster-role-binding), the
+> two log-string backstops **logic-tested** (still Backstop — see gaps), lateral-movement
+> **partially** tested (still Draft — the FP allowlist isn't covered), and the **6 Falco
+> rules still Sound** (they need the Tier 2 `kind` harness, not yet built). Tier 3
+> (live AKS end-to-end) is still a follow-up.
 
 ---
 
@@ -45,17 +48,17 @@ data. Only a fired attack proves a detection.
 | Tactic | Technique | Detection | Log table | Trigger script | Stratus | Maturity |
 |--------|-----------|-----------|-----------|----------------|:------:|:--------:|
 | Privilege Escalation | **T1610** Deploy Container | `kql/privileged-pod.kql` | `AKSAuditAdmin` | `attack-simulations/privileged-pod.sh` | ✔ | ✅ Proven (Tier 1) |
-| Privilege Escalation | **T1611** Escape to Host | `kql/hostpath-volume.kql` | `AKSAuditAdmin` | `attack-simulations/hostpath-volume.sh` | ✔ | 🟩 Sound |
-| Privilege Escalation | **T1611** Escape to Host | `kql/nodes-proxy-grant.kql` | `AKSAuditAdmin` | `attack-simulations/nodes-proxy.sh` | ✔ | 🟩 Sound |
-| Credential Access | **T1552.007** Container API | `kql/dump-secrets.kql` | `AKSAudit` | `attack-simulations/dump-secrets.sh` | ✔ | 🟩 Sound |
+| Privilege Escalation | **T1611** Escape to Host | `kql/hostpath-volume.kql` | `AKSAuditAdmin` | `attack-simulations/hostpath-volume.sh` | ✔ | ✅ Proven (Tier 1) |
+| Privilege Escalation | **T1611** Escape to Host | `kql/nodes-proxy-grant.kql` | `AKSAuditAdmin` | `attack-simulations/nodes-proxy.sh` | ✔ | ✅ Proven (Tier 1) |
+| Credential Access | **T1552.007** Container API | `kql/dump-secrets.kql` | `AKSAudit` | `attack-simulations/dump-secrets.sh` | ✔ | ✅ Proven (Tier 1) |
 | Credential Access | **T1552.007** Container API | *(create pods/exec)* | `AKSAuditAdmin` | `attack-simulations/pod-exec.sh` | ✔ | 🟩 Sound |
-| Persistence | **T1098** Account Manipulation | `kql/create-token.kql` | `AKSAuditAdmin` | `attack-simulations/create-token.sh` | ✔ | 🟩 Sound |
-| Persistence | **T1098** Account Manipulation | `kql/create-client-certificate.kql` | `AKSAuditAdmin` | `attack-simulations/create-client-certificate.sh` | ✔ | 🟩 Sound |
-| Persistence | **T1098.006** Additional Cluster Roles | `T1098.006-cluster-role-binding/query.kql` | `AKSAudit` | `T1098.006-cluster-role-binding/attack.sh` + `test.kql` | ✔ | 🔵 Proof-ready |
-| Lateral Movement | **T1550.001** Application Access Token | `kql/lateral-movement.kql` | `AKSAudit` | `attack-simulations/lateral-movement.sh` | ✘ | 🟨 Draft |
+| Persistence | **T1098** Account Manipulation | `kql/create-token.kql` | `AKSAuditAdmin` | `attack-simulations/create-token.sh` | ✔ | ✅ Proven (Tier 1) |
+| Persistence | **T1098** Account Manipulation | `kql/create-client-certificate.kql` | `AKSAuditAdmin` | `attack-simulations/create-client-certificate.sh` | ✔ | ✅ Proven (Tier 1) |
+| Persistence | **T1098.006** Additional Cluster Roles | `T1098.006-cluster-role-binding/query.kql` | `AKSAudit` | `T1098.006-cluster-role-binding/attack.sh` + Tier 1 test | ✔ | ✅ Proven (Tier 1) |
+| Lateral Movement | **T1550.001** Application Access Token | `kql/lateral-movement.kql` | `AKSAudit` | `attack-simulations/lateral-movement.sh` | ✘ | 🟨 Draft (Tier 1 partial) |
 | Discovery | **T1046** Network Service Discovery | `kql/network-lateral-movement.kql` | *(ACNS/Hubble flow logs)* | — *(requires flow-log plane)* | ✘ | ⬜ Template |
-| Impact | **T1496** Resource Hijacking | `kql/crypto-mining.kql` | `ContainerLogV2` | `attack-simulations/crypto-mining.sh` | ✘ | 🟧 Backstop |
-| Privilege Escalation | **T1611** Escape to Host | `kql/container-escape.kql` | `ContainerLogV2` | `attack-simulations/container-escape.sh` | ✘ | 🟧 Backstop |
+| Impact | **T1496** Resource Hijacking | `kql/crypto-mining.kql` | `ContainerLogV2` | `attack-simulations/crypto-mining.sh` | ✘ | 🟧 Backstop (Tier 1 logic) |
+| Privilege Escalation | **T1611** Escape to Host | `kql/container-escape.kql` | `ContainerLogV2` | `attack-simulations/container-escape.sh` | ✘ | 🟧 Backstop (Tier 1 logic) |
 
 ## Runtime plane — Falco (node syscalls)
 
@@ -112,7 +115,7 @@ everything and **level 1 for `privileged-pod`**.
 | Level | What runs | Proves | Cost | Cadence |
 |-------|-----------|--------|------|---------|
 | **0 — structure** | `tools/detection-validator/validate.py` | the rule is well-formed (has MITRE tag, time filter, required fields) | free | every PR |
-| **1 — logic (Tier 1)** | `tools/detection-tester/kql_test.py` against the **Kusto emulator** | the real `.kql` fires on a recorded malicious event and stays silent on a benign one | free | every PR |
+| **1 — logic (Tier 1)** | `tools/detection-tester/kql_test.py` against the **Kusto emulator** | the real `.kql` fires on a recorded malicious event and stays silent on a benign one | free | every PR — **10 KQL rules covered** |
 | **2 — end-to-end (Tier 3)** | deploy AKS + run `attack-simulations/*.sh` + query Log Analytics | the live attack, in a real cluster, actually trips the detection | ~$ + ~20 min | nightly / manual |
 
 ### How the Tier 1 logic test works
@@ -153,11 +156,13 @@ fixture. A malicious fixture must return > 0 rows; a benign one must return 0.
 
 Honesty column — what this matrix does **not** yet claim:
 
-1. **Only `privileged-pod` is CI-proven, and only at the logic level (Tier 1).**
-   `T1098.006` is *proof-ready* (it has the ingredients) but nothing runs them yet.
-   Every other row has a trigger script, but nothing asserts automatically that the
-   attack still fires the detection. Raising a 🟩 to ✅ means adding an event fixture
-   + the CI logic test described below (or a live end-to-end run).
+1. **Tier 1 proves LOGIC, not the live pipeline.** 7 KQL rules pass an automated
+   logic test on every PR (fires on the recorded attack event, silent on benign).
+   That is real regression protection, but it asserts the query is correct against a
+   *recorded* event — it does not prove the live attack still produces that event, or
+   that AKS ingests it. Only a Tier 3 live run proves the full pipeline. The **6 Falco
+   rules are not covered by Tier 1 at all** (they're syscall rules — they need the
+   Tier 2 `kind` harness, still to build).
 2. **`lateral-movement.kql` (🟨) has no allowlist.** It fires on any cross-namespace
    service-account use, including legitimate `kube-system` controllers — expect heavy
    false positives until baselined. See [`DETECTION-TUNING.md`](./DETECTION-TUNING.md).

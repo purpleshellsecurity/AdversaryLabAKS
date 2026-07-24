@@ -1,0 +1,7 @@
+[
+  {
+    "Verb": "get",
+    "User": { "username": "system:serviceaccount:attacker:red-team-operator" },
+    "ObjectRef": { "resource": "secrets", "namespace": "victim" }
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "rule": "detections/kql/nodes-proxy-grant.kql",
+  "table": "AKSAuditAdmin",
+  "inject_timegenerated": true,
+  "schema": [
+    { "name": "Verb", "type": "string" },
+    { "name": "User", "type": "dynamic" },
+    { "name": "ObjectRef", "type": "dynamic" },
+    { "name": "RequestObject", "type": "dynamic" },
+    { "name": "SourceIps", "type": "dynamic" },
+    { "name": "RequestUri", "type": "string" }
+  ],
+  "cases": [
+    { "name": "human ClusterRole granting nodes/proxy fires", "fixture": "malicious.json", "expect": "match" },
+    { "name": "role without nodes/proxy and system: actor stay silent", "fixture": "benign.json", "expect": "no_match" }
+  ]
+}

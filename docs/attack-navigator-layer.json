@@ -26,26 +26,26 @@
     },
     {
       "techniqueID": "T1611",
-      "score": 75,
-      "comment": "SOUND — kql/hostpath-volume.kql, kql/nodes-proxy-grant.kql, falco/container-escape.yaml | BACKSTOP kql/container-escape.kql | triggers: hostpath-volume.sh, nodes-proxy.sh, container-escape.sh | Stratus (KQL)",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — kql/hostpath-volume.kql, kql/nodes-proxy-grant.kql | SOUND falco/container-escape.yaml | BACKSTOP kql/container-escape.kql | triggers + fixtures | Stratus (KQL)",
       "enabled": true
     },
     {
       "techniqueID": "T1552.007",
-      "score": 75,
-      "comment": "SOUND — kql/dump-secrets.kql + create pods/exec | triggers: dump-secrets.sh, pod-exec.sh | Stratus",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — kql/dump-secrets.kql | SOUND create pods/exec | triggers: dump-secrets.sh, pod-exec.sh | Stratus",
       "enabled": true
     },
     {
       "techniqueID": "T1098",
-      "score": 75,
-      "comment": "SOUND — kql/create-token.kql, kql/create-client-certificate.kql | triggers: create-token.sh, create-client-certificate.sh | Stratus",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — kql/create-token.kql, kql/create-client-certificate.kql | triggers + fixtures | Stratus",
       "enabled": true
     },
     {
       "techniqueID": "T1098.006",
-      "score": 60,
-      "comment": "PROOF-READY — T1098.006-cluster-role-binding/ (attack.sh + test.kql exist, but NOT yet run by CI) | Stratus",
+      "score": 100,
+      "comment": "PROVEN (Tier 1) — T1098.006-cluster-role-binding/query.kql (attack.sh + fixtures, logic test in CI) | Stratus",
       "enabled": true
     },
     {

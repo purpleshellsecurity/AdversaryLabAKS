@@ -1,0 +1,20 @@
+[
+  {
+    "Stage": "ResponseComplete",
+    "Verb": "create",
+    "User": { "username": "system:serviceaccount:kube-system:clusterrole-aggregation-controller" },
+    "ObjectRef": { "resource": "clusterrolebindings", "name": "system:controller:managed" },
+    "ResponseStatus": { "code": 201 },
+    "SourceIps": ["10.1.0.8"],
+    "UserAgent": "kube-controller-manager/v1.30.0"
+  },
+  {
+    "Stage": "ResponseComplete",
+    "Verb": "create",
+    "User": { "username": "intruder@corp.com" },
+    "ObjectRef": { "resource": "clusterrolebindings", "name": "denied-attempt" },
+    "ResponseStatus": { "code": 403 },
+    "SourceIps": ["10.1.2.9"],
+    "UserAgent": "kubectl/v1.30.0"
+  }
+]

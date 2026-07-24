@@ -1,0 +1,11 @@
+[
+  {
+    "Stage": "ResponseComplete",
+    "Verb": "create",
+    "User": { "username": "attacker@corp.com" },
+    "ObjectRef": { "resource": "clusterrolebindings", "name": "adversary-lab-test-crb-1" },
+    "ResponseStatus": { "code": 201 },
+    "SourceIps": ["10.1.2.3"],
+    "UserAgent": "kubectl/v1.30.0"
+  }
+]
