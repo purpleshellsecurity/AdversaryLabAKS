@@ -1,0 +1,6 @@
+{
+  "rule": "detections/falco/token-theft.yaml",
+  "expect_rule": "Read ServiceAccount Token in Container",
+  "image": "busybox:1.36",
+  "cmd": "mkdir -p /var/run/secrets/kubernetes.io/serviceaccount && printf faketoken > /var/run/secrets/kubernetes.io/serviceaccount/token && cat /var/run/secrets/kubernetes.io/serviceaccount/token"
+}

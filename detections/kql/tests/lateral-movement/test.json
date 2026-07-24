@@ -2,7 +2,7 @@
   "rule": "detections/kql/lateral-movement.kql",
   "table": "AKSAudit",
   "inject_timegenerated": true,
-  "note": "Tier 1 proves the cross-namespace signal fires and same-namespace is silent. It does NOT cover the false-positive gap (legitimate kube-system controllers acting cross-namespace) — that needs the allowlist tuning described in DETECTION-TUNING.md, which is why this rule stays 'Draft'.",
+  "note": "Tier 1 proves: a workload SA crossing namespaces fires; same-namespace use is silent; AND a legitimate kube-system controller acting cross-namespace is now suppressed by the infra_source_ns allowlist. That last case is the tuning that graduates this rule from Draft.",
   "schema": [
     { "name": "Verb", "type": "string" },
     { "name": "User", "type": "dynamic" },
@@ -10,6 +10,6 @@
   ],
   "cases": [
     { "name": "attacker-ns SA acting on victim-ns fires", "fixture": "malicious.json", "expect": "match" },
-    { "name": "same-namespace SA use is silent", "fixture": "benign.json", "expect": "no_match" }
+    { "name": "same-ns use and allowlisted kube-system controller stay silent", "fixture": "benign.json", "expect": "no_match" }
   ]
 }

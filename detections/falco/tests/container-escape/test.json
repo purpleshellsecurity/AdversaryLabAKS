@@ -1,0 +1,6 @@
+{
+  "rule": "detections/falco/container-escape.yaml",
+  "expect_rule": "Container Escape via nsenter",
+  "image": "debian:stable-slim",
+  "cmd": "nsenter --version || true; nsenter -t 1 -m -- true || true"
+}

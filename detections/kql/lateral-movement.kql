@@ -4,15 +4,37 @@
 // Source: AKSAudit
 // ============================================================================
 
-// Detect service account from one namespace authenticating to another namespace's resources
+// A service account from one namespace authenticating to ANOTHER namespace's
+// resources — the token-reuse signature of lateral movement.
+//
+// TUNING (why this is no longer a blanket cross-namespace alert): infrastructure
+// controllers in kube-system and friends legitimately act across every namespace,
+// so an untuned version drowns in false positives. We allowlist those SOURCE
+// namespaces (and any named exceptions), keeping WORKLOAD namespaces loud — an app
+// or attacker SA reaching into another namespace still fires. Baseline your own
+// cluster to confirm this list (see docs/DETECTION-TUNING.md).
+//
+// NOTE: a stolen *kube-system* SA token used to pivot is intentionally NOT this
+// detection's job (its source ns is allowlisted here) — it is caught by the
+// per-resource detections (dump-secrets, create-token, …) which allowlist by
+// identity × action, so a controller doing something outside its lane still fires.
+let infra_source_ns = dynamic([
+    "kube-system", "gatekeeper-system", "kube-node-lease",
+    "calico-system", "tigera-operator", "azure-workload-identity-system"
+]);
+let allow_sa = dynamic([
+    // Named cross-namespace exceptions for THIS cluster, e.g.:
+    // "system:serviceaccount:monitoring:ama-logs"   // Container Insights agent
+]);
 AKSAudit
 | where TimeGenerated > ago(1h)
-| where Verb in ("get", "list", "create", "exec")
+| where Verb in ("get", "list", "create", "delete")
 | extend Username = tostring(User.username)
 | extend SourceNamespace = extract("system:serviceaccount:([^:]+):", 1, Username)
 | extend TargetNamespace = tostring(ObjectRef.namespace)
-| where isnotempty(SourceNamespace)
-| where isnotempty(TargetNamespace)
+| where isnotempty(SourceNamespace) and isnotempty(TargetNamespace)
 | where SourceNamespace != TargetNamespace
+| where SourceNamespace !in (infra_source_ns)   // drop infra controllers (baseline)
+| where Username !in (allow_sa)                  // drop named exceptions
 | project TimeGenerated, Username, SourceNamespace, TargetNamespace, Verb, Resource = tostring(ObjectRef.resource)
 | extend MitreTechnique = "T1550.001"

@@ -1,0 +1,6 @@
+{
+  "rule": "detections/falco/crypto-mining.yaml",
+  "expect_rule": "Crypto Mining Process Detected",
+  "image": "busybox:1.36",
+  "cmd": "cp /bin/sleep /tmp/xmrig && /tmp/xmrig 2"
+}
