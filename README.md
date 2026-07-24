@@ -332,7 +332,9 @@ Falco rules are assembled from `detections/falco/` into `helm/falco/values.yaml`
 Every detection is mapped to a MITRE technique and a trigger script in the
 [detection coverage matrix](docs/DETECTION-COVERAGE.md) (with a color-coded
 [ATT&CK Navigator layer](docs/attack-navigator-layer.json)). New to the detections?
-Start with the [beginner's walkthrough](docs/DETECTIONS-FOR-BEGINNERS.md).
+Start with the [beginner's walkthrough](docs/DETECTIONS-FOR-BEGINNERS.md). Want the
+whole testing system in plain language (no jargon)? Read
+[How we know the detections work](docs/HOW-WE-KNOW-DETECTIONS-WORK.md).
 
 ---
 

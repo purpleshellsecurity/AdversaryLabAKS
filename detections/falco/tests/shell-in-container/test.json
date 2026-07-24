@@ -1,0 +1,6 @@
+{
+  "rule": "detections/falco/shell-in-container.yaml",
+  "expect_rule": "Shell Spawned in Container",
+  "image": "busybox:1.36",
+  "cmd": "id; echo shell-spawned"
+}

@@ -202,6 +202,65 @@ jobs:
             --repo-root . \
             --wait-seconds 180
 
+  # ── Tier 2: Falco RUNTIME test (live syscalls, no cloud) ─────────────────
+  # Runs Falco (modern eBPF) on the runner with the repo's custom rules, fires a
+  # safe trigger container per rule, and asserts the expected rule name appears in
+  # Falco's JSON output. Proves the syscall rules end-to-end without an AKS cluster.
+  falco-runtime-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Start Falco with the repo's custom rules (modern eBPF)
+        run: |
+          docker run -d --name falco \
+            --privileged \
+            -v /proc:/host/proc:ro \
+            -v "${GITHUB_WORKSPACE}/detections/falco:/etc/falco/rules.d:ro" \
+            falcosecurity/falco:latest \
+            falco -o engine.kind=modern_ebpf \
+                  -o json_output=true \
+                  -o stdout_output.enabled=true \
+                  -o log_level=info \
+                  -o priority=debug
+
+      - name: Wait for Falco to attach the driver and load rules
+        run: |
+          for i in $(seq 1 40); do
+            if docker logs falco 2>&1 | grep -qiE "loading rules|rules? loaded|starting internal webserver|falco initialized|actual rules"; then
+              echo "Falco is up (iteration $i)"; sleep 6; exit 0
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -q '^falco$'; then
+              echo "Falco container exited early — logs follow:"; docker logs falco 2>&1 | tail -80; exit 1
+            fi
+            sleep 3
+          done
+          echo "Falco did not report readiness in time — logs follow:"
+          docker logs falco 2>&1 | tail -80
+          exit 1
+
+      - name: Fire runtime triggers and assert rules fired
+        run: |
+          set +e
+          python tools/detection-tester/falco_test.py \
+            --tests-dir detections/falco/tests \
+            --container falco \
+            --settle-seconds 10
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "=== Falco container logs (tail) ==="
+            docker logs falco 2>&1 | tail -100
+          fi
+          exit $rc
+
   python-sast:
     runs-on: ubuntu-latest
     timeout-minutes: 10

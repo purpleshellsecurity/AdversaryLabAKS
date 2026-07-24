@@ -3,5 +3,10 @@
     "Verb": "get",
     "User": { "username": "system:serviceaccount:victim:default" },
     "ObjectRef": { "resource": "configmaps", "namespace": "victim" }
+  },
+  {
+    "Verb": "list",
+    "User": { "username": "system:serviceaccount:kube-system:generic-garbage-collector" },
+    "ObjectRef": { "resource": "pods", "namespace": "victim" }
   }
 ]

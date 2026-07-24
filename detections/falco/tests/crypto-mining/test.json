@@ -1,0 +1,7 @@
+{
+  "rule": "detections/falco/crypto-mining.yaml",
+  "expect_rule": "Crypto Mining Process Detected",
+  "image": "busybox:1.36",
+  "note": "Uses the stratum+tcp cmdline branch of the rule. The renamed-binary approach (proc.name=xmrig) is pre-empted by Falco's built-in 'Drop and execute new binary in container', since Falco emits only the first matching rule per event.",
+  "cmd": "echo connecting to stratum+tcp://pool.minexmr.com:4444"
+}
