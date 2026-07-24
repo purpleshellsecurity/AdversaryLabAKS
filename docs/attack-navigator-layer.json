@@ -6,7 +6,7 @@
     "layer": "4.5"
   },
   "domain": "enterprise-attack",
-  "description": "Detection coverage for the AKS Adversary Lab. Score = detection maturity: 100 Proven (attack + CI test), 75 Sound (documented signal + trigger script), 40 Draft (needs tuning), 10 Backstop/Template (weak or non-functional). See docs/DETECTION-COVERAGE.md.",
+  "description": "Detection coverage for the AKS Adversary Lab. Score = detection maturity: 100 Proven (CI test asserts it fires), 60 Proof-ready (test artifacts exist but not run by CI), 75 Sound (documented signal + trigger script), 40 Draft (needs tuning), 10 Backstop/Template (weak or non-functional). See docs/DETECTION-COVERAGE.md.",
   "filters": {
     "platforms": ["Containers", "IaaS", "Azure AD"]
   },
@@ -20,8 +20,8 @@
   "techniques": [
     {
       "techniqueID": "T1610",
-      "score": 75,
-      "comment": "SOUND — kql/privileged-pod.kql | trigger: privileged-pod.sh | Stratus",
+      "score": 100,
+      "comment": "PROVEN (Tier 1 logic test) — kql/privileged-pod.kql | trigger: privileged-pod.sh | fixtures + CI test | Stratus",
       "enabled": true
     },
     {
@@ -44,8 +44,8 @@
     },
     {
       "techniqueID": "T1098.006",
-      "score": 100,
-      "comment": "PROVEN — T1098.006-cluster-role-binding/ (attack.sh + test.kql asserted in CI) | Stratus",
+      "score": 60,
+      "comment": "PROOF-READY — T1098.006-cluster-role-binding/ (attack.sh + test.kql exist, but NOT yet run by CI) | Stratus",
       "enabled": true
     },
     {
@@ -97,8 +97,9 @@
     "maxValue": 100
   },
   "legendItems": [
-    { "label": "Proven (100) — attack + CI true-positive test", "color": "#388e3c" },
+    { "label": "Proven (100) — CI test asserts it fires", "color": "#388e3c" },
     { "label": "Sound (75) — documented signal + trigger script", "color": "#7cb342" },
+    { "label": "Proof-ready (60) — test artifacts exist, not yet run by CI", "color": "#c0ca33" },
     { "label": "Draft (40) — real signal, needs tuning", "color": "#fbc02d" },
     { "label": "Backstop/Template (10) — weak or non-functional", "color": "#d32f2f" }
   ],

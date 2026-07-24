@@ -337,10 +337,14 @@ This one is a complete *package* showing what "production" looks like:
 - `query.kql` — the detection.
 - `attack.sh` — performs the attack (creates a binding named `adversary-lab-test-crb-<timestamp>`).
 - `test.kql` — a **test** that looks for that test binding name and returns a
-  count. CI runs the attack, then this, and asserts count > 0 — proving *the
-  attack actually trips the detection*. **The most valuable idea in the repo: you
-  don't trust a detection until you've fired the real attack at it and watched it
-  catch it.**
+  count. The *intent* is: run the attack, then this query, and assert count > 0 —
+  proving *the attack actually trips the detection*. **The most valuable idea in
+  the repo: you don't trust a detection until you've fired the real attack at it
+  and watched it catch it.** ⚠️ **Important honesty note:** this end-to-end loop
+  is **not yet wired into CI** — `test.kql` is the ingredient, but no workflow runs
+  it against a live cluster today. So this detection is *proof-ready*, not proven.
+  See [`DETECTION-COVERAGE.md`](./DETECTION-COVERAGE.md) for how proof is actually
+  being built (offline logic tests + live end-to-end).
 - `rule.bicep` — infrastructure-as-code that deploys this as a live Microsoft
   Sentinel analytics rule (High severity, runs every 15 min, looks back 1 hour).
   This is how a detection stops being a text file and becomes an alert that pages

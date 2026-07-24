@@ -1,0 +1,25 @@
+{
+  "rule": "detections/kql/privileged-pod.kql",
+  "table": "AKSAuditAdmin",
+  "inject_timegenerated": true,
+  "schema": [
+    { "name": "Verb", "type": "string" },
+    { "name": "User", "type": "dynamic" },
+    { "name": "ObjectRef", "type": "dynamic" },
+    { "name": "RequestObject", "type": "dynamic" },
+    { "name": "SourceIps", "type": "dynamic" },
+    { "name": "RequestUri", "type": "string" }
+  ],
+  "cases": [
+    {
+      "name": "privileged main + init container by a human fires",
+      "fixture": "malicious.json",
+      "expect": "match"
+    },
+    {
+      "name": "non-privileged pod and system: actor stay silent",
+      "fixture": "benign.json",
+      "expect": "no_match"
+    }
+  ]
+}

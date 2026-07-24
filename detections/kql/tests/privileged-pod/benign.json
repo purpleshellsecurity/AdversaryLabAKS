@@ -1,0 +1,38 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "developer@corp.com", "groups": ["system:authenticated"] },
+    "ObjectRef": { "resource": "pods", "namespace": "default", "name": "normal-app" },
+    "RequestObject": {
+      "spec": {
+        "containers": [
+          { "name": "app", "image": "nginx:1.27", "securityContext": { "privileged": false } }
+        ]
+      }
+    },
+    "SourceIps": ["10.1.2.4"],
+    "RequestUri": "/api/v1/namespaces/default/pods"
+  },
+  {
+    "Verb": "create",
+    "User": { "username": "system:serviceaccount:kube-system:daemonset-controller", "groups": ["system:serviceaccounts"] },
+    "ObjectRef": { "resource": "pods", "namespace": "kube-system", "name": "kube-proxy-xyz" },
+    "RequestObject": {
+      "spec": {
+        "containers": [
+          { "name": "kube-proxy", "image": "mcr.microsoft.com/oss/kubernetes/kube-proxy:v1.30", "securityContext": { "privileged": true } }
+        ]
+      }
+    },
+    "SourceIps": ["10.1.0.10"],
+    "RequestUri": "/api/v1/namespaces/kube-system/pods"
+  },
+  {
+    "Verb": "get",
+    "User": { "username": "developer@corp.com", "groups": ["system:authenticated"] },
+    "ObjectRef": { "resource": "pods", "namespace": "default", "name": "normal-app" },
+    "RequestObject": {},
+    "SourceIps": ["10.1.2.4"],
+    "RequestUri": "/api/v1/namespaces/default/pods/normal-app"
+  }
+]
