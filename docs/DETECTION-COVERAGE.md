@@ -4,6 +4,11 @@ The single source of truth mapping **every detection in this repo** to its MITRE
 ATT&CK technique, the plane it runs on, the log source it reads, the **trigger
 script** that fires it, and an honest **maturity** rating.
 
+> **Feeling lost in the jargon?** Start with
+> [`HOW-WE-KNOW-DETECTIONS-WORK.md`](./HOW-WE-KNOW-DETECTIONS-WORK.md) — the whole
+> testing system in plain language, with a glossary that translates every term used
+> below. Then come back here for the detail.
+
 - Machine-readable visual version: [`attack-navigator-layer.json`](./attack-navigator-layer.json)
   — load it at [mitre-attack.github.io/attack-navigator](https://mitre-attack.github.io/attack-navigator/)
   (Open Existing Layer → Upload from local) for a color-coded coverage map.
