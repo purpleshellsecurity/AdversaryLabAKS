@@ -2,6 +2,9 @@
 
 Quick reference for querying AKS log tables in the Adversary Lab environment.
 
+> Where the dynamic-column parsing patterns come from and how they were verified:
+> [KQL-AUDIT-PARSING.md](KQL-AUDIT-PARSING.md)
+
 ## Table Overview
 
 | Table | Source | Primary Use |
