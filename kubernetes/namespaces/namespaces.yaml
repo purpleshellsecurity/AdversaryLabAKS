@@ -1,51 +1,86 @@
+# ============================================================================
 # AKS Adversary Lab - Namespace Definitions
+# ----------------------------------------------------------------------------
+# PURPOSE: Establishes the SEGMENTATION backbone of the lab. Each namespace is
+#   a security boundary that keeps attacker, victim, blue-team, and assessment
+#   workloads apart. Network policies (see network-policies/) and RBAC key off
+#   the `adversary-lab/role` label defined here.
+# POD SECURITY ADMISSION (PSA): the `pod-security.kubernetes.io/*` labels apply
+#   the built-in Pod Security Standards per namespace. Three modes exist:
+#     enforce = reject non-compliant pods; audit = log them; warn = user warning.
+#   Standard LEVELS (least->most restrictive): privileged < baseline < restricted.
+#   The lab deliberately loosens `enforce` where attackers need to run privileged
+#   or escape-capable pods, and tightens it where it should model real controls.
+# Documents (4 namespaces):
+#   1. attacker       - red-team offensive tooling
+#   2. victim         - vulnerable target workloads
+#   3. monitoring     - blue-team detection/monitoring
+#   4. security-tools - security assessment tooling
+# ============================================================================
 ---
+# --- DOC 1: attacker namespace ----------------------------------------------
+# Home of the red-team tools. PSA `enforce: privileged` = the MOST PERMISSIVE
+# level: privileged/escape-capable pods are allowed so attack simulations
+# (container escape, host mounts) can actually run. Intentionally weak.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: attacker
   labels:
-    adversary-lab/role: "red-team"
-    pod-security.kubernetes.io/enforce: "privileged"
+    adversary-lab/role: "red-team"                        # used by netpol/RBAC to identify attackers
+    pod-security.kubernetes.io/enforce: "privileged"      # allow privileged pods (needed for escapes)
     pod-security.kubernetes.io/enforce-version: "latest"
-    pod-security.kubernetes.io/audit: "privileged"
-    pod-security.kubernetes.io/warn: "baseline"
+    pod-security.kubernetes.io/audit: "privileged"        # audit only at privileged (no noise)
+    pod-security.kubernetes.io/warn: "baseline"           # warn if a pod breaks even baseline
   annotations:
     adversary-lab/description: "Offensive security tools"
 ---
+# --- DOC 2: victim namespace ------------------------------------------------
+# Holds the vulnerable target apps. PSA `enforce: baseline` = block the most
+# dangerous settings while still permitting the apps' insecure-by-design config.
+# `audit`/`warn: restricted` surface how far each workload falls short of the
+# strictest standard — teaching signal without blocking the lab.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: victim
   labels:
-    adversary-lab/role: "target"
-    pod-security.kubernetes.io/enforce: "baseline"
+    adversary-lab/role: "target"                          # marks this as the attack target zone
+    pod-security.kubernetes.io/enforce: "baseline"        # enforce baseline (permissive enough for weak apps)
     pod-security.kubernetes.io/enforce-version: "latest"
-    pod-security.kubernetes.io/audit: "restricted"
-    pod-security.kubernetes.io/warn: "restricted"
+    pod-security.kubernetes.io/audit: "restricted"        # log everything below the strict bar
+    pod-security.kubernetes.io/warn: "restricted"         # warn author when below the strict bar
   annotations:
     adversary-lab/description: "Vulnerable workloads"
 ---
+# --- DOC 3: monitoring namespace --------------------------------------------
+# Blue-team detection/monitoring (Falco, Prometheus, Grafana, Container
+# Insights). `enforce: privileged` because agents like Falco need host-level
+# access (kernel/syscall visibility) to observe the whole node.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: monitoring
   labels:
-    adversary-lab/role: "blue-team"
-    pod-security.kubernetes.io/enforce: "privileged"
+    adversary-lab/role: "blue-team"                       # netpol allows this role to scrape victims
+    pod-security.kubernetes.io/enforce: "privileged"      # monitoring agents legitimately need privilege
     pod-security.kubernetes.io/enforce-version: "latest"
     pod-security.kubernetes.io/audit: "baseline"
     pod-security.kubernetes.io/warn: "baseline"
   annotations:
     adversary-lab/description: "Detection and monitoring tools"
 ---
+# --- DOC 4: security-tools namespace ----------------------------------------
+# For scanners/assessment tooling. PSA `enforce: restricted` = the STRICTEST
+# standard, modelling a REAL control: these tools must run hardened (non-root,
+# no privilege escalation). Contrast with the attacker namespace above.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: security-tools
   labels:
     adversary-lab/role: "assessment"
-    pod-security.kubernetes.io/enforce: "restricted"
+    pod-security.kubernetes.io/enforce: "restricted"      # strictest — a genuine hardening control
     pod-security.kubernetes.io/enforce-version: "latest"
     pod-security.kubernetes.io/audit: "restricted"
     pod-security.kubernetes.io/warn: "restricted"

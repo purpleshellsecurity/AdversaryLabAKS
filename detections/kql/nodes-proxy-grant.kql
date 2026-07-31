@@ -4,18 +4,36 @@
 // Source: AKSAuditAdmin
 // ============================================================================
 
-// The nodes-proxy technique makes no nodes/proxy API call the audit log can see —
-// the proxy call goes to the kubelet directly. The durable, reliable signal is the
-// RBAC grant: a ClusterRole whose rules include nodes/proxy. mv-apply inspects each rule.
+// HOW THIS DETECTION WORKS
+// -------------------------
+// The nodes/proxy RBAC verb lets a subject talk to the KUBELET API on each node
+// directly — which allows executing commands in ANY pod on that node, i.e. a path
+// to the host / privilege escalation (T1611 Escape to Host).
+//
+// DETECTION-DESIGN INSIGHT: you CANNOT reliably catch the abuse at call time,
+// because the proxied request goes to the kubelet and does not appear as a
+// nodes/proxy call in the API-server audit log. So we detect the ENABLER instead:
+// the creation of a ClusterRole whose rules grant `nodes/proxy`. That RBAC write
+// is durable and always audited.
+//
+// A ClusterRole has an ARRAY of rules, each with a `resources` list, so we use
+// mv-apply to inspect every rule and keep roles where any rule lists nodes/proxy.
+//
+// TABLE: AKSAuditAdmin — write/mutating audit events (ClusterRole `create`).
+
 AKSAuditAdmin
-| where TimeGenerated > ago(1h)
-| where Verb == "create" and ObjectRef.resource == "clusterroles"
+| where TimeGenerated > ago(1h)                                  // recent window first
+| where Verb == "create" and ObjectRef.resource == "clusterroles"  // only ClusterRole creations
 // Tune: the built-in system:prometheus role also grants nodes/proxy, created by aksService.
-| where User.username != "aksService" and User.username !startswith "system:"
+| where User.username != "aksService" and User.username !startswith "system:"  // drop AKS + control-plane creators
+// mv-apply expands the rules[] array to one row per rule; the inner where keeps
+// only rules whose `resources` list contains "nodes/proxy" (set_has_element =
+// membership test on an array). Rules without it are dropped; a role with no
+// matching rule yields no rows and falls out.
 | mv-apply rule = RequestObject.rules on (
     where set_has_element(rule.resources, "nodes/proxy")   // wildcard "*" roles are caught by privileged-RBAC detections
-    | project Resources = tostring(rule.resources), Verbs = tostring(rule.verbs)
+    | project Resources = tostring(rule.resources), Verbs = tostring(rule.verbs)  // surface what the rule grants
   )
-| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
-          ClusterRole = tostring(ObjectRef.name), Resources, Verbs, RequestUri
-| extend MitreTechnique = "T1611"
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where
+          ClusterRole = tostring(ObjectRef.name), Resources, Verbs, RequestUri                 // which role + the offending grant
+| extend MitreTechnique = "T1611"    // tag with the ATT&CK technique

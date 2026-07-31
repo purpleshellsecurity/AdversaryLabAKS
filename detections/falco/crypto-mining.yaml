@@ -3,8 +3,22 @@
 # MITRE ATT&CK: T1496.001 - Compute Hijacking
 # ============================================================================
 
+# HOW THIS RULE WORKS
+# -------------------
+# Crypto miners hijack cluster CPU to mine coins (T1496.001 Compute Hijacking).
+# Falco catches the miner at process-spawn time by fingerprinting it: either a
+# known miner BINARY NAME, or a command line containing mining-pool protocol/algo
+# strings. This is the syscall-level twin of detections/kql/crypto-mining.kql.
+#
+# NOTE: condition/output are `>` block scalars — their indented lines are literal
+# rule text, so all commentary lives on full lines between the mapping keys.
+
 - rule: Crypto Mining Process Detected
   desc: Detects known crypto mining binaries or pool connections (MITRE T1496.001)
+  # condition matches a new in-container process that is EITHER a named miner
+  # binary (xmrig/minerd/minergate/cpuminer) OR whose command line contains a
+  # mining fingerprint: "stratum+tcp" (pool protocol), a known pool host, or the
+  # "cryptonight" algorithm. `in (...)` = set membership; `contains` = substring.
   condition: >
     spawned_process and
     container and
@@ -12,10 +26,11 @@
      proc.cmdline contains "stratum+tcp" or
      proc.cmdline contains "pool.minexmr" or
      proc.cmdline contains "cryptonight")
+  # output names the offending process/command and its container/pod/namespace/image.
   output: >
     Crypto mining activity detected
     (process=%proc.name command=%proc.cmdline
      container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
      image=%container.image.repository:%container.image.tag)
-  priority: CRITICAL
-  tags: [mitre_impact, T1496, T1496.001]
+  priority: CRITICAL   # active resource hijacking — treat as high severity
+  tags: [mitre_impact, T1496, T1496.001]   # ATT&CK tactic + technique labels

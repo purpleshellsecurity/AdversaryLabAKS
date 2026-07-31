@@ -4,9 +4,23 @@
 // Source: AKSAudit + ContainerLogV2
 // ============================================================================
 
-// Detect nsenter execution inside a container — strong indicator of escape attempt
-ContainerLogV2
-| where TimeGenerated > ago(1h)
-| where LogMessage has "nsenter"
-| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage
-| extend MitreTechnique = "T1611"
+// HOW THIS DETECTION WORKS
+// -------------------------
+// `nsenter` enters another process's Linux namespaces. Inside a privileged
+// container an attacker runs `nsenter --target 1 --mount ...` to jump into the
+// HOST's namespaces (PID 1 = the node's init) and effectively break out of the
+// container onto the node — that is T1611 (Escape to Host).
+//
+// This query is LOG/STDOUT-based: it scans container stdout/stderr captured in
+// Log Analytics for the literal string "nsenter". It is the cheap, always-on
+// complement to the Falco syscall rule (detections/falco/container-escape.yaml),
+// which catches the actual process spawn at the kernel level.
+//
+// TABLE: ContainerLogV2 — the Azure Monitor for Containers table holding one row
+//        per container stdout/stderr line, enriched with pod/namespace metadata.
+
+ContainerLogV2                       // read collected container console logs
+| where TimeGenerated > ago(1h)      // time filter first (cheapest, prunes the scan window)
+| where LogMessage has "nsenter"     // `has` = whole-token match on the log text; the escape tell
+| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage  // keep only the analyst-relevant columns
+| extend MitreTechnique = "T1611"    // tag every hit with the ATT&CK technique for triage/reporting

@@ -3,19 +3,32 @@
 # Techniques: T1190 (Exploit Public-Facing Application)
 # Deliberately vulnerable Node.js/Angular application
 # DO NOT deploy in production environments
+# ----------------------------------------------------------------------------
+# PURPOSE: OWASP Juice Shop is the flagship, purpose-built vulnerable web app
+#   (SQLi, XSS, broken auth, insecure deserialization, and more). It is the
+#   richest attack surface among the victim apps.
+# HOW IT FITS THE LAB: Another target in the `victim` namespace. Red-team tools
+#   exploit it; Falco / Container Insights watch for the resulting behavior
+#   (webshells, reverse shells, token reads). The mitre-techniques annotation
+#   lists the ATT&CK IDs it helps exercise.
+# Documents in this file:
+#   1. juice-shop Deployment - the vulnerable app itself
+#   2. juice-shop Service    - internal ClusterIP so in-cluster attackers reach it
 # ============================================================================
 
 ---
+# --- DOC 1: Juice Shop Deployment -------------------------------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: juice-shop
-  namespace: victim
+  namespace: victim                         # segmented target namespace
   labels:
     app: juice-shop
-    adversary-lab/role: "vulnerable-app"
-    adversary-lab/expose: "web"
+    adversary-lab/role: "vulnerable-app"    # lab taxonomy: attackable target
+    adversary-lab/expose: "web"             # network policy matches this to allow web ingress
   annotations:
+    # T1190 = Exploit Public-Facing App; T1552.001 = Creds in Files; T1078 = Valid Accounts
     adversary-lab/mitre-techniques: "T1190,T1552.001,T1078"
     adversary-lab/description: "OWASP Juice Shop — deliberately vulnerable Node.js app"
     adversary-lab/warning: "INTENTIONALLY VULNERABLE — do not deploy in production"
@@ -28,38 +41,42 @@ spec:
     metadata:
       labels:
         app: juice-shop
-        adversary-lab/expose: "web"
+        adversary-lab/expose: "web"         # pod carries the expose label for netpol matching
     spec:
+      # No hardening securityContext on purpose — a realistically weak target.
       containers:
         - name: juice-shop
-          image: bkimminich/juice-shop:latest
+          image: bkimminich/juice-shop:latest  # unpinned `latest`; fine for a throwaway lab
           ports:
             - containerPort: 3000
               name: http
           env:
             - name: NODE_ENV
-              value: "unsafe"
+              value: "unsafe"               # INTENTIONAL: unlocks/relaxes Juice Shop protections
           resources:
             requests:
               cpu: "100m"
               memory: "256Mi"
-            limits:
+            limits:                          # caps so an exploit can't exhaust the node
               cpu: "500m"
               memory: "512Mi"
-          readinessProbe:
+          readinessProbe:                    # gate traffic until the app answers on /
             httpGet:
               path: /
               port: 3000
-            initialDelaySeconds: 30
+            initialDelaySeconds: 30          # Node app needs warm-up time before first check
             periodSeconds: 10
-          livenessProbe:
+          livenessProbe:                     # restart the pod if / stops responding
             httpGet:
               path: /
               port: 3000
-            initialDelaySeconds: 60
+            initialDelaySeconds: 60          # generous grace period before liveness kicks in
             periodSeconds: 30
 
 ---
+# --- DOC 2: Juice Shop Service ----------------------------------------------
+# Internal-only ClusterIP on port 3000 — reachable by in-cluster attacker pods,
+# not the internet. Keeps the vulnerable app contained inside the lab.
 apiVersion: v1
 kind: Service
 metadata:
@@ -68,10 +85,10 @@ metadata:
   labels:
     app: juice-shop
 spec:
-  type: ClusterIP
+  type: ClusterIP                            # internal exposure only
   ports:
     - port: 3000
       targetPort: 3000
       name: http
   selector:
-    app: juice-shop
+    app: juice-shop                          # routes to the Juice Shop pods above

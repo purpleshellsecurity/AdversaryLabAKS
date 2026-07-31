@@ -3,16 +3,32 @@
 # MITRE ATT&CK: T1552.005 - Cloud Instance Metadata API
 # ============================================================================
 
+# HOW THIS RULE WORKS
+# -------------------
+# 169.254.169.254 is the Azure Instance Metadata Service (IMDS), a link-local
+# endpoint that hands out the NODE's managed-identity tokens. A workload pod has
+# no legitimate reason to call it; when one does, the attacker is trying to steal
+# the node identity and pivot from the cluster into the Azure subscription
+# (T1552.005 Cloud Instance Metadata API). Falco sees the outbound connection at
+# the socket layer.
+#
+# NOTE: condition/output are `>` block scalars — their indented lines are literal
+# rule text, so all commentary lives on full lines between the mapping keys.
+
 - rule: Pod Contacted Cloud Instance Metadata Service
   desc: Detects a container connecting to the Azure IMDS endpoint to steal the node managed identity and pivot into the subscription (MITRE T1552.005)
+  # condition matches an outbound network connection FROM inside a container whose
+  # server IP (fd.sip) is the IMDS link-local address. Those three ANDed = a pod
+  # reaching cloud metadata.
   condition: >
     outbound and
     container and
     fd.sip = "169.254.169.254"
+  # output records who/what made the call and the connection + container context.
   output: >
     Container reached cloud metadata endpoint
     (user=%user.name proc=%proc.name cmdline=%proc.cmdline
      connection=%fd.name container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
      image=%container.image.repository:%container.image.tag)
-  priority: CRITICAL
-  tags: [mitre_credential_access, T1552.005]
+  priority: CRITICAL   # credential-theft pivot into the cloud — high severity
+  tags: [mitre_credential_access, T1552.005]   # ATT&CK tactic + technique labels

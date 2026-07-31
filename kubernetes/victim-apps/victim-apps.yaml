@@ -1,19 +1,40 @@
+# ============================================================================
 # AKS Adversary Lab - Victim Applications
+# ----------------------------------------------------------------------------
+# PURPOSE: Deploys the intentionally VULNERABLE targets that attackers (the
+#   red-team tooling) practice against. Everything here lives in the `victim`
+#   namespace so it is segmented from attacker/monitoring workloads.
+# HOW IT FITS THE LAB: These are the "crown jewels" the blue-team (monitoring
+#   / Falco) tries to detect being attacked, and the red-team tries to exploit.
+#   The MITRE ATT&CK technique IDs in each annotation label WHICH attack each
+#   resource is meant to exercise, so detections can be mapped to techniques.
+# WARNING: Every workload below is insecure BY DESIGN. Never run in production.
+# Documents in this file (separated by `---`):
+#   1. DVWA Deployment           - classic vulnerable web app (SQLi/XSS/etc.)
+#   2. DVWA Service              - ClusterIP so attackers can reach it in-cluster
+#   3. vulnerable-api Deployment - leaks secrets via env vars / response text
+#   4. vulnerable-api Service    - ClusterIP exposure of the API
+#   5. database-credentials Secret - a "target secret" for credential theft sims
+#   6. backup-job CronJob        - benign scheduled workload (detection baseline)
+# ============================================================================
 ---
+# --- DOC 1: DVWA (Damn Vulnerable Web Application) Deployment ---------------
+# A well-known deliberately vulnerable PHP/MySQL app. Here it is the public-
+# facing target for T1190 (Exploit Public-Facing Application).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dvwa
-  namespace: victim
+  namespace: victim                       # lives in the segmented victim namespace
   labels:
     app: dvwa
-    adversary-lab/role: "vulnerable-app"
-    adversary-lab/expose: "web"
+    adversary-lab/role: "vulnerable-app"  # lab taxonomy: this is an attackable target
+    adversary-lab/expose: "web"           # network policy uses this label to allow web ingress
   annotations:
-    adversary-lab/mitre-techniques: "T1190"
-    adversary-lab/warning: "INTENTIONALLY VULNERABLE"
+    adversary-lab/mitre-techniques: "T1190"          # Exploit Public-Facing Application
+    adversary-lab/warning: "INTENTIONALLY VULNERABLE" # insecure by design, not a real service
 spec:
-  replicas: 1
+  replicas: 1                             # single replica is plenty for a lab target
   selector:
     matchLabels:
       app: dvwa
@@ -21,35 +42,46 @@ spec:
     metadata:
       labels:
         app: dvwa
-        adversary-lab/expose: "web"
+        adversary-lab/expose: "web"       # pods carry the expose label so netpol matches them
     spec:
+      # NOTE: no securityContext is set here on purpose. The image runs with its
+      # default (often root) user and no hardening — an intentionally weak posture
+      # that gives attackers something realistic to exploit and defenders to detect.
       containers:
         - name: dvwa
-          image: docker.io/vulnerables/web-dvwa:latest
+          image: docker.io/vulnerables/web-dvwa:latest  # `latest` = unpinned, another weak-by-design choice
           ports:
             - containerPort: 80
               name: http
           env:
             - name: MYSQL_HOSTNAME
-              value: "127.0.0.1"
+              value: "127.0.0.1"          # DB expected on localhost within the pod
           resources:
-            requests: { cpu: "100m", memory: "128Mi" }
-            limits: { cpu: "500m", memory: "512Mi" }
+            requests: { cpu: "100m", memory: "128Mi" }  # baseline reservation
+            limits: { cpu: "500m", memory: "512Mi" }    # cap so a lab exploit can't starve the node
 ---
+# --- DOC 2: DVWA Service ----------------------------------------------------
+# ClusterIP (internal only) — reachable by other in-cluster pods (e.g. the
+# attacker tooling) but not exposed to the internet. Attacks are simulated
+# from INSIDE the cluster to keep the lab self-contained.
 apiVersion: v1
 kind: Service
 metadata:
   name: dvwa
   namespace: victim
 spec:
-  type: ClusterIP
+  type: ClusterIP                         # internal-only; no external LoadBalancer/NodePort
   ports:
     - port: 80
       targetPort: 80
       name: http
   selector:
-    app: dvwa
+    app: dvwa                             # routes to the DVWA pods above
 ---
+# --- DOC 3: vulnerable-api Deployment ---------------------------------------
+# A tiny http-echo server standing in for a badly-built API. It is misconfigured
+# to LEAK CREDENTIALS: fake secrets are injected as plaintext env vars, and the
+# response body nudges attackers toward the mounted ServiceAccount token.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -60,6 +92,7 @@ metadata:
     adversary-lab/role: "vulnerable-app"
     adversary-lab/expose: "web"
   annotations:
+    # T1552.001 = Credentials in Files; T1528 = Steal Application Access Token
     adversary-lab/mitre-techniques: "T1552.001,T1528"
     adversary-lab/warning: "INTENTIONALLY MISCONFIGURED"
 spec:
@@ -77,12 +110,18 @@ spec:
         - name: api
           image: docker.io/hashicorp/http-echo:latest
           args:
+            # The echoed text intentionally hints where the SA token is mounted,
+            # guiding red-teamers toward token theft (T1528).
             - "-text=Vulnerable API - Check /var/run/secrets/ for SA token"
             - "-listen=:8080"
           ports:
             - containerPort: 8080
               name: http
           env:
+            # INSECURE BY DESIGN: secrets hard-coded as plaintext env vars.
+            # Real apps should use mounted Secrets/CSI; here they are deliberately
+            # exposed so credential-theft detections (T1552.001) can be tested.
+            # NOTE: all values below are FAKE lab data, safe to commit.
             - name: DATABASE_PASSWORD
               value: "SuperSecretDBPassword123!"
             - name: API_KEY
@@ -93,6 +132,8 @@ spec:
             requests: { cpu: "50m", memory: "32Mi" }
             limits: { cpu: "200m", memory: "128Mi" }
 ---
+# --- DOC 4: vulnerable-api Service ------------------------------------------
+# Internal ClusterIP exposing the API on 8080 to in-cluster attackers.
 apiVersion: v1
 kind: Service
 metadata:
@@ -107,21 +148,29 @@ spec:
   selector:
     app: vulnerable-api
 ---
+# --- DOC 5: database-credentials Secret -------------------------------------
+# A "target secret" planted for credential-theft simulation (T1552.007 =
+# Credentials in Container/Config). Attackers with `get secrets` RBAC (see the
+# over-permissive roles in rbac.yaml) can read these. Values are FAKE lab data.
 apiVersion: v1
 kind: Secret
 metadata:
   name: database-credentials
   namespace: victim
   labels:
-    adversary-lab/role: "target-secret"
+    adversary-lab/role: "target-secret"          # lab taxonomy: something worth stealing
   annotations:
-    adversary-lab/mitre-techniques: "T1552.007"
+    adversary-lab/mitre-techniques: "T1552.007"  # Unsecured Credentials: Container API/Secrets
 type: Opaque
-stringData:
+stringData:                                       # stringData = plaintext at apply time (lab convenience)
   username: "db_admin"
   password: "VictimDBPassword456!"
   connection-string: "Server=db.victim.svc;Database=app;User=db_admin;Password=VictimDBPassword456!"
 ---
+# --- DOC 6: backup-job CronJob ----------------------------------------------
+# A BENIGN scheduled workload. Unlike the others it is labelled a
+# "legitimate-workload": it exists to provide normal-activity BASELINE noise so
+# defenders can practice distinguishing real attacks from routine scheduled jobs.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -129,11 +178,11 @@ metadata:
   namespace: victim
   labels:
     app: backup
-    adversary-lab/role: "legitimate-workload"
+    adversary-lab/role: "legitimate-workload"    # NOT an attack target — normal traffic
   annotations:
-    adversary-lab/mitre-techniques: "T1053.007"
+    adversary-lab/mitre-techniques: "T1053.007"  # Scheduled Task/Job: Container Orchestration Job
 spec:
-  schedule: "0 2 * * *"
+  schedule: "0 2 * * *"                           # daily at 02:00 (cron format)
   jobTemplate:
     spec:
       template:
@@ -141,8 +190,9 @@ spec:
           containers:
             - name: backup
               image: docker.io/busybox:latest
+              # Harmless echo+sleep stand-in for a real backup routine.
               command: ["/bin/sh", "-c", "echo 'Running scheduled backup...' && sleep 5 && echo 'Backup complete'"]
               resources:
                 requests: { cpu: "50m", memory: "32Mi" }
                 limits: { cpu: "200m", memory: "128Mi" }
-          restartPolicy: OnFailure
+          restartPolicy: OnFailure                # retry the Job's pod only if it fails

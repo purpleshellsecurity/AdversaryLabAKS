@@ -1,32 +1,61 @@
+# ============================================================================
+# AKS Adversary Lab - Falco umbrella-chart values (values.yaml)
+# ----------------------------------------------------------------------------
 # Umbrella-chart values for the AKS Adversary Lab.
 # The Falco chart is a DEPENDENCY (see Chart.yaml), so all of its values are
 # nested under the `falco:` key (the dependency name). `falco.falco` is Falco's
 # own falco.yaml config — the repeated name is expected with Helm subcharts.
+#
+# WHAT THIS CONFIGURES: how Falco (the blue-team runtime-detection engine) runs
+# on the AKS nodes, how it emits alerts, and — most importantly for the lab — a
+# set of CUSTOM detection rules tuned to the exact attacker behaviors this lab
+# generates. Each custom rule maps to a MITRE ATT&CK technique.
+# ============================================================================
 
 falco:
   driver:
+    # How Falco taps the kernel to observe syscalls. modern_ebpf = the CO-RE eBPF
+    # probe: no kernel module to compile, works on recent AKS node kernels.
     kind: modern_ebpf
   collectors:
     kubernetes:
+      # Enrich events with Kubernetes context (pod/namespace/image), so alerts
+      # say WHICH victim pod was attacked, not just a raw process.
       enabled: true
   falco:
-    json_output: true
-    json_include_output_property: true
-    log_stderr: true
-    log_syslog: false
-    log_level: info
-    rules_files:
-    - /etc/falco/falco_rules.yaml
-    - /etc/falco/falco_rules.local.yaml
-    - /etc/falco/rules.d
+    # ---- Output / logging behavior --------------------------------------
+    json_output: true                     # emit alerts as JSON (machine-parseable for SIEM/hunting)
+    json_include_output_property: true    # include the human-readable message inside the JSON too
+    log_stderr: true                      # send Falco's own logs to stderr (visible via kubectl logs)
+    log_syslog: false                     # not also to syslog
+    log_level: info                       # verbosity of Falco's internal logs
+    rules_files:                          # ordered list of rule files Falco loads
+    - /etc/falco/falco_rules.yaml         # upstream default ruleset
+    - /etc/falco/falco_rules.local.yaml   # site-local overrides
+    - /etc/falco/rules.d                  # directory of extra rules (where customRules land)
   falcosidekick:
+    # Falcosidekick fans Falco alerts out to external sinks (Slack, webhooks, etc).
     enabled: true
     config:
-      debug: true
+      debug: true                         # verbose sidekick logging — handy in a lab, noisy in prod
   tolerations:
+  # Let the Falco DaemonSet schedule onto AKS system/critical nodes that carry
+  # the CriticalAddonsOnly taint, so detection covers every node.
   - key: CriticalAddonsOnly
     operator: Exists
     effect: NoSchedule
+  # ---- Custom detection rules -------------------------------------------
+  # A single YAML file (embedded below as one string value) injected into the
+  # rules.d directory. It defines lab-specific rules, each tagged with a MITRE
+  # technique, covering the attacker behaviors this lab exercises:
+  #   * "Read ServiceAccount Token in Container"      -> T1528 (SA token theft)
+  #   * "Container Escape via nsenter"                -> T1611 (escape to host)
+  #   * "Crypto Mining Process Detected"             -> T1496.001 (resource hijacking)
+  #   * "Reverse Shell in Container"                 -> T1059 (reverse shells)
+  #   * "Shell Spawned in Container"                 -> T1059 (webshell/interactive shell)
+  #   * "Pod Contacted Cloud Instance Metadata..."   -> T1552.005 (IMDS credential theft)
+  # NOTE: the value is an escaped multi-line string (\n literals) — do not
+  # reformat it; Falco parses the embedded YAML at load time.
   customRules:
     adversary-lab-rules.yaml: "- rule: Read ServiceAccount Token in Container\n  desc: Detects processes reading the mounted SA token inside a container (MITRE T1528)\n  condition: >\n    open_read and\n    container and\n    (fd.name = \"/var/run/secrets/kubernetes.io/serviceaccount/token\" or\n     fd.name = \"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt\")\n  output: >\n    SA token read inside container\n    (user=%user.name command=%proc.cmdline file=%fd.name\n     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: WARNING\n  tags: [mitre_credential_access, T1528]\n\n- rule: Container Escape via nsenter\n  desc: Detects nsenter execution which may indicate container escape (MITRE T1611)\n  condition: >\n    spawned_process and\n    container and\n    proc.name = nsenter\n  output: >\n    nsenter executed in container \u2014 possible escape attempt\n    (user=%user.name command=%proc.cmdline\n\
       \     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: CRITICAL\n  tags: [mitre_privilege_escalation, T1611]\n\n- rule: Crypto Mining Process Detected\n  desc: Detects known crypto mining binaries or pool connections (MITRE T1496.001)\n  condition: >\n    spawned_process and\n    container and\n    (proc.name in (xmrig, minerd, minergate, cpuminer) or\n     proc.cmdline contains \"stratum+tcp\" or\n     proc.cmdline contains \"pool.minexmr\" or\n     proc.cmdline contains \"cryptonight\")\n  output: >\n    Crypto mining activity detected\n    (process=%proc.name command=%proc.cmdline\n     container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name\n     image=%container.image.repository:%container.image.tag)\n  priority: CRITICAL\n  tags: [mitre_impact, T1496, T1496.001]\n\n- rule: Reverse Shell in Container\n  desc: Detects common reverse shell patterns in containers\n  condition: >\n    spawned_process\

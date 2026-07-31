@@ -4,18 +4,37 @@
 // Source: ContainerLogV2 + InsightsMetrics
 // ============================================================================
 
-// Process-based detection
-ContainerLogV2
-| where TimeGenerated > ago(1h)
-| where LogMessage has_any ("xmrig", "minerd", "stratum+tcp", "cryptonight", "pool.minexmr")
-| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage
-| extend MitreTechnique = "T1496"
+// HOW THIS DETECTION WORKS
+// -------------------------
+// Crypto mining (T1496 Resource Hijacking) steals the cluster's CPU to mine coins.
+// There are two complementary ways to catch it, and this file ships both:
+//
+//   1. PROCESS/SIGNATURE (active below): scan container logs for the fingerprints
+//      of miners — binary names (xmrig, minerd), mining-pool protocol strings
+//      (stratum+tcp), algorithm names (cryptonight), and known pool hostnames.
+//   2. CPU ANOMALY (commented out): watch resource metrics for sustained high CPU,
+//      which catches unknown/renamed miners that leave no signature.
+//
+// The signature approach is precise (low false positives) but misses novel miners;
+// the anomaly approach is the safety net. In production you'd run both.
 
-// CPU anomaly detection
+// --- Approach 1: signature match on container stdout/stderr -------------------
+// TABLE: ContainerLogV2 — collected container console output.
+ContainerLogV2
+| where TimeGenerated > ago(1h)          // recent window first
+// has_any = match if the log line contains ANY of these tokens. Mix of binary
+// names, pool-protocol markers, and a known pool hostname — the miner's fingerprints.
+| where LogMessage has_any ("xmrig", "minerd", "stratum+tcp", "cryptonight", "pool.minexmr")
+| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage  // analyst-relevant columns
+| extend MitreTechnique = "T1496"        // tag with the ATT&CK technique
+
+// --- Approach 2: CPU anomaly (DISABLED — reference implementation) ------------
+// Enable when signature coverage isn't enough; catches renamed/unknown miners.
+// TABLE: InsightsMetrics — the Azure Monitor container metrics table.
 // InsightsMetrics
 // | where TimeGenerated > ago(1h)
-// | where Namespace == "container.azm.ms/cpu"
-// | where Name == "cpuUsageNanoCores"
-// | extend Tags = parse_json(Tags)
+// | where Namespace == "container.azm.ms/cpu"        // the CPU metric namespace
+// | where Name == "cpuUsageNanoCores"                // per-container CPU usage counter
+// | extend Tags = parse_json(Tags)                   // Tags is JSON; parse to read podName/podNamespace
 // | where todouble(Val) > 1800000000 // >1.8 cores sustained = suspicious
 // | project TimeGenerated, PodName = tostring(Tags.podName), Namespace = tostring(Tags.podNamespace), CpuNanoCores = Val

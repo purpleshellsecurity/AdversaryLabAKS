@@ -4,15 +4,30 @@
 // Source: AKSAudit
 // ============================================================================
 
-// Detect service account from one namespace authenticating to another namespace's resources
+// HOW THIS DETECTION WORKS
+// -------------------------
+// A ServiceAccount identity is namespaced: its username has the shape
+// `system:serviceaccount:<namespace>:<name>`. Normally a workload's SA only ever
+// touches resources in its OWN namespace. When an SA from namespace A starts
+// acting on resources in namespace B, that's a strong lateral-movement signal —
+// the attacker stole a token in A and is reusing it to reach into B
+// (T1550.001 Use Alternate Authentication Material: Application Access Token).
+//
+// The core trick: derive the SOURCE namespace from the SA username, compare it to
+// the TARGET namespace on the object being accessed, and alert when they differ.
+//
+// TABLE: AKSAudit — the full audit log (we need reads: get/list, not just writes).
+
 AKSAudit
-| where TimeGenerated > ago(1h)
-| where Verb in ("get", "list", "create", "exec")
-| extend Username = tostring(User.username)
+| where TimeGenerated > ago(1h)                          // recent window first
+| where Verb in ("get", "list", "create", "exec")        // read/create/exec — the actions worth tracking
+| extend Username = tostring(User.username)               // pull the caller identity out as a string
+// extract() runs a regex and returns capture group 1: the namespace embedded in a
+// ServiceAccount username. For a non-SA (a human/AAD user) there's no match -> "".
 | extend SourceNamespace = extract("system:serviceaccount:([^:]+):", 1, Username)
-| extend TargetNamespace = tostring(ObjectRef.namespace)
-| where isnotempty(SourceNamespace)
-| where isnotempty(TargetNamespace)
-| where SourceNamespace != TargetNamespace
-| project TimeGenerated, Username, SourceNamespace, TargetNamespace, Verb, Resource = tostring(ObjectRef.resource)
-| extend MitreTechnique = "T1550.001"
+| extend TargetNamespace = tostring(ObjectRef.namespace)  // the namespace of the object being touched
+| where isnotempty(SourceNamespace)                       // keep only ServiceAccount callers
+| where isnotempty(TargetNamespace)                       // keep only namespaced target objects
+| where SourceNamespace != TargetNamespace                // THE FINDING: cross-namespace access
+| project TimeGenerated, Username, SourceNamespace, TargetNamespace, Verb, Resource = tostring(ObjectRef.resource)  // who went where, doing what
+| extend MitreTechnique = "T1550.001"    // tag with the ATT&CK sub-technique

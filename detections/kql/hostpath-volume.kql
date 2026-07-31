@@ -4,20 +4,35 @@
 // Source: AKSAuditAdmin
 // ============================================================================
 
-// A pod mounting a hostPath volume — the container gets a window onto the node
-// filesystem, the classic breakout primitive. mv-apply over spec.volumes, keyed
-// on the hostPath field existing.
+// HOW THIS DETECTION WORKS
+// -------------------------
+// A `hostPath` volume mounts a directory from the NODE's filesystem into the pod.
+// Mount something sensitive (/ , /var/run/docker.sock, /etc/kubernetes) and the
+// container has a window onto the host — the classic container-breakout primitive
+// (T1611 Escape to Host). This detection fires at ADMISSION time, when the pod is
+// created, so you catch it before the workload even runs.
+//
+// The interesting mechanic is mv-apply: a pod can declare MANY volumes, so we need
+// to inspect the spec.volumes ARRAY element-by-element and keep only the pods that
+// have at least one hostPath entry — reporting exactly which volume and host path.
+//
+// TABLE: AKSAuditAdmin — write/mutating audit events (pod `create` lands here).
+
 AKSAuditAdmin
-| where TimeGenerated > ago(1h)
-| where Verb == "create" and ObjectRef.resource == "pods"
+| where TimeGenerated > ago(1h)                                  // recent window first
+| where Verb == "create" and ObjectRef.resource == "pods"       // only pod-creation events
+// mv-apply expands the spec.volumes array into one virtual row per volume, runs
+// the inner pipeline on each, and keeps only rows that survive it. The inner
+// `where isnotempty(volume.hostPath)` drops every non-hostPath volume, so a pod
+// with zero hostPath volumes produces no rows (and drops out of the results).
 | mv-apply volume = RequestObject.spec.volumes on (
-    where isnotempty(volume.hostPath)
-    | project VolumeName = tostring(volume.name), HostPath = tostring(volume.hostPath.path)
+    where isnotempty(volume.hostPath)                                          // keep hostPath volumes only
+    | project VolumeName = tostring(volume.name), HostPath = tostring(volume.hostPath.path)  // surface the volume + host dir
   )
 // Tune: CSI node drivers / monitoring agents legitimately mount hostPath in
 // kube-system — allowlist those, alert on hostPath in workload namespaces.
-| where User.username != "aksService" and User.username !startswith "system:"
-| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
-          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),
-          VolumeName, HostPath, RequestUri
-| extend MitreTechnique = "T1611"
+| where User.username != "aksService" and User.username !startswith "system:"  // drop AKS + control-plane creators
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where
+          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),           // which pod
+          VolumeName, HostPath, RequestUri                                                     // and exactly what it mounted
+| extend MitreTechnique = "T1611"    // tag with the ATT&CK technique

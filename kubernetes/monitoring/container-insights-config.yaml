@@ -1,11 +1,25 @@
+# ============================================================================
+# AKS Adversary Lab - Azure Monitor Container Insights configuration
+# ----------------------------------------------------------------------------
+# PURPOSE: Configures the AKS-managed Azure Monitor Agent (Container Insights).
+#   This is BLUE-TEAM telemetry: it ships container stdout/stderr logs and
+#   metrics to a Log Analytics workspace where detections/hunting queries run.
+# HOW IT FITS THE LAB: Alongside Falco, this is how defenders observe the attacks
+#   run against the victim apps. The magic name below is the exact ConfigMap the
+#   AKS add-on reads — it MUST be named `container-azm-ms-agentconfig` and live in
+#   `kube-system`, or the agent ignores it.
+# ============================================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: container-azm-ms-agentconfig
-  namespace: kube-system
+  name: container-azm-ms-agentconfig   # reserved name the Container Insights add-on watches
+  namespace: kube-system               # must live here — the managed agent runs in kube-system
 data:
-  schema-version: v1
-  config-version: ver1
+  schema-version: v1                   # config schema version expected by the agent
+  config-version: ver1                 # free-form tag so you can track which config revision is live
+  # TOML block controlling log collection. Opting into the v2 container-log
+  # schema (ContainerLogV2) — richer fields (pod/namespace/labels) that make
+  # threat-hunting queries in Log Analytics far more precise than the legacy v1.
   agent-settings: |-
     [agent_settings.log_collection]
       [agent_settings.log_collection.schema]

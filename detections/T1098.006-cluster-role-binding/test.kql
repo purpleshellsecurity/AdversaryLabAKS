@@ -4,16 +4,21 @@
 // Returns count of matching events. Harness asserts count > 0.
 // ============================================================================
 
+// This is the narrower CI-test twin of query.kql. Instead of hunting all
+// suspicious bindings, it looks ONLY for the exact object attack.sh creates
+// (name prefix "adversary-lab-test-crb-") within the last 30m, then counts them.
+// The harness asserts count > 0, proving attack -> log -> detection actually works.
+
 AKSAudit
-| where TimeGenerated > ago(30m)
-| where Stage == "ResponseComplete"
-| where Verb == "create"
-| extend
-    Username    = tostring(User.username),
-    Resource    = tostring(ObjectRef.resource),
-    BindingName = tostring(ObjectRef.name)
-| where Resource == "clusterrolebindings"
-| where BindingName startswith "adversary-lab-test-crb-"
-| where toint(ResponseStatus.code) between (200 .. 299)
-| project TimeGenerated, Username, BindingName
-| count
+| where TimeGenerated > ago(30m)                      // short window: the attack just ran
+| where Stage == "ResponseComplete"                   // final audit stage only (no double-count)
+| where Verb == "create"                              // the attack is a create
+| extend                                              // flatten the nested fields we assert on:
+    Username    = tostring(User.username),             //   who
+    Resource    = tostring(ObjectRef.resource),        //   object kind
+    BindingName = tostring(ObjectRef.name)             //   object name
+| where Resource == "clusterrolebindings"             // only ClusterRoleBindings
+| where BindingName startswith "adversary-lab-test-crb-"  // the exact prefix attack.sh uses
+| where toint(ResponseStatus.code) between (200 .. 299)   // only if the create succeeded
+| project TimeGenerated, Username, BindingName        // (optional) surface the rows...
+| count                                               // ...but the harness only needs the tally

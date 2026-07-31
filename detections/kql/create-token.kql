@@ -4,15 +4,28 @@
 // Source: AKSAuditAdmin
 // ============================================================================
 
-// Minting a token via the TokenRequest API (serviceaccounts/token), especially
-// for an existing privileged kube-system SA such as clusterrole-aggregation-controller.
-// NOTE: nodes-proxy also mints a token — tell them apart by the target SA:
-//       an existing privileged kube-system SA = this; a fresh purpose-built SA = nodes-proxy.
+// HOW THIS DETECTION WORKS
+// -------------------------
+// The TokenRequest API (POST serviceaccounts/<name>/token) issues a bearer token
+// for a ServiceAccount on demand. An attacker who can call it against a PRIVILEGED
+// existing SA (e.g. kube-system's clusterrole-aggregation-controller) walks away
+// with that SA's cluster rights — persistence / credential creation, T1098.
+//
+// DISAMBIGUATION: nodes-proxy.kql's attack ALSO ends in a TokenRequest. Tell the
+// two apart by the TARGET ServiceAccount:
+//   - an EXISTING privileged kube-system SA -> this detection
+//   - a fresh, purpose-built SA the attacker just created -> nodes-proxy
+//
+// TABLE: AKSAuditAdmin — write/mutating audit events only (TokenRequest is a
+//        `create`, so it lands here rather than in the full-read AKSAudit table).
+
 AKSAuditAdmin
-| where TimeGenerated > ago(1h)
+| where TimeGenerated > ago(1h)                          // recent window first
+// Match exactly the TokenRequest call: create + serviceaccounts resource + the
+// `token` subresource. All three conditions pin it to token minting, nothing else.
 | where Verb == "create" and ObjectRef.resource == "serviceaccounts" and ObjectRef.subresource == "token"
 // Tune: kubelets (system:node:*) mint projected tokens constantly — allowlist them.
-| where User.username != "aksService" and User.username !startswith "system:"
-| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
-          Namespace = tostring(ObjectRef.namespace), ServiceAccount = tostring(ObjectRef.name), RequestUri
-| extend MitreTechnique = "T1098"
+| where User.username != "aksService" and User.username !startswith "system:"  // drop AKS + control-plane callers
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where
+          Namespace = tostring(ObjectRef.namespace), ServiceAccount = tostring(ObjectRef.name), RequestUri  // which SA got a token
+| extend MitreTechnique = "T1098"    // tag with the ATT&CK technique
