@@ -4,24 +4,41 @@
 // Source: AKSAuditAdmin
 // ============================================================================
 
-// A pod created with any privileged container. mv-apply inspects EACH container
-// (incl. init/ephemeral), so a single privileged sidecar is caught and named —
-// not just "something in the pod was privileged".
+// HOW THIS DETECTION WORKS
+// -------------------------
+// A container with securityContext.privileged=true runs with all capabilities and
+// effectively unrestricted access to the host — the easiest breakout there is. An
+// attacker who can create pods deploys a privileged one to gain a foothold on the
+// node (T1610 Deploy Container). This fires at admission (pod `create`).
+//
+// Two mechanics matter:
+//   1. A privileged container can hide in ANY of three lists — containers,
+//      initContainers, ephemeralContainers — so we array_concat all three into one
+//      list before scanning. coalesce(..., dynamic([])) turns a missing list into
+//      an empty array so the concat never fails on nulls.
+//   2. mv-apply then checks EACH container, so a single privileged sidecar is
+//      caught and reported BY NAME (not just "the pod had something privileged").
+//
+// TABLE: AKSAuditAdmin — write/mutating audit events (pod `create`).
+
 AKSAuditAdmin
-| where TimeGenerated > ago(1h)
-| where Verb == "create" and ObjectRef.resource == "pods"
+| where TimeGenerated > ago(1h)                                  // recent window first
+| where Verb == "create" and ObjectRef.resource == "pods"       // only pod-creation events
+// Merge the three possible container lists into one array to scan uniformly.
+// coalesce() supplies an empty array when a given list is absent (null-safe concat).
 | extend allContainers = array_concat(
-    coalesce(RequestObject.spec.containers,          dynamic([])),
-    coalesce(RequestObject.spec.initContainers,      dynamic([])),
-    coalesce(RequestObject.spec.ephemeralContainers, dynamic([])))
+    coalesce(RequestObject.spec.containers,          dynamic([])),   // normal app containers
+    coalesce(RequestObject.spec.initContainers,      dynamic([])),   // init containers
+    coalesce(RequestObject.spec.ephemeralContainers, dynamic([])))   // debug/ephemeral containers
+// Expand to one row per container; keep only those explicitly marked privileged.
 | mv-apply container = allContainers on (
     where container.securityContext.privileged == true   // null-safe: unset != true
-    | project ContainerName = tostring(container.name), Image = tostring(container.image)
+    | project ContainerName = tostring(container.name), Image = tostring(container.image)  // name + image of the offender
   )
 // Tune: AKS system DaemonSets (kube-proxy, CSI node drivers) are legitimately
 // privileged — allowlist kube-system controllers, alert on everyone else.
-| where User.username != "aksService" and User.username !startswith "system:"
-| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),
-          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),
-          ContainerName, Image, RequestUri
-| extend MitreTechnique = "T1610"
+| where User.username != "aksService" and User.username !startswith "system:"  // drop AKS + control-plane creators
+| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where
+          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),           // which pod
+          ContainerName, Image, RequestUri                                                     // which container + image
+| extend MitreTechnique = "T1610"    // tag with the ATT&CK technique

@@ -17,8 +17,28 @@ How it works — no ingestion pipeline needed:
   Because the `let` shadows the table name, the UNMODIFIED detection query runs
   against our fixture. That means we test the actual shipped logic, not a copy.
 
+  This is the key trick, so it's worth stating plainly: in KQL a `let` binding
+  that shares a name with a real table takes precedence within the query. The
+  shipped rule starts with `AKSAuditAdmin | where ...`. Normally that reads the
+  live cloud table; here, because we prepended `let AKSAuditAdmin = datatable(...)`,
+  the very same rule text now reads our in-memory fixture rows instead — no
+  ingestion, no cloud, no edits to the rule. We append `| count` so the whole
+  thing collapses to a single number: >0 rows means "the detection fired".
+
 A test manifest (detections/kql/tests/<rule>/test.json) declares the rule path,
 the table name, the column schema, and the cases (fixture -> expected match/no_match).
+A minimal manifest looks like:
+
+    {
+      "rule": "detections/kql/privileged-pod.kql",   # rule text to test, repo-relative
+      "table": "AKSAuditAdmin",                        # table name the rule reads (shadowed)
+      "schema": [{"name": "RequestUri", "type": "string"}, ...],
+      "inject_timegenerated": true,                    # add a fresh TimeGenerated column?
+      "cases": [
+        {"name": "fires on privileged pod", "fixture": "malicious.json", "expect": "match"},
+        {"name": "quiet on normal pod",     "fixture": "benign.json",    "expect": "no_match"}
+      ]
+    }
 
 Usage:
   python kql_test.py --tests-dir detections/kql/tests               # run against $KUSTO_ENDPOINT
@@ -34,6 +54,9 @@ import time
 from pathlib import Path
 
 try:
+    # requests is only used to POST queries at the live Kusto emulator. --dry-run
+    # never touches the network, so we tolerate it being absent and only complain
+    # (in run()) if a live run is actually attempted without it.
     import requests
 except ImportError:
     requests = None  # only needed for live runs, not --dry-run

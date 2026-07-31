@@ -1,5 +1,29 @@
+# ============================================================================
 # AKS Adversary Lab - Red Team Tool Deployments
+# ----------------------------------------------------------------------------
+# PURPOSE: Deploys the ATTACKER tooling — a set of long-running pods that a
+#   red-teamer execs into to run recon, credential theft, and escape attempts
+#   against the victim namespace. This is the offensive half of the lab.
+# COMMON PATTERN: every pod runs in the `attacker` namespace, uses the
+#   `red-team-operator` ServiceAccount (whose deliberately broad RBAC is defined
+#   in rbac.yaml), and `sleep infinity` so it stays alive to be exec'd into.
+#   `restartPolicy: Never` means a crashed/finished tool pod is NOT auto-restarted.
+#   Tools are pulled at runtime from GitHub releases — expect egress to the
+#   internet (permitted by the attacker allow-all-egress network policy).
+# HOW IT FITS THE LAB: The activity these tools generate is exactly what the
+#   blue-team stack (Falco rules, Container Insights) is meant to detect.
+# Documents (6 attacker pods):
+#   1. kdigger     - in-cluster recon / info gathering
+#   2. cdk         - container escape & exploitation toolkit
+#   3. peirates    - Kubernetes penetration-testing / privesc tool
+#   4. kubectl     - raw API access for enumeration & abuse
+#   5. net-scanner - nmap for network/service discovery
+#   6. curler      - curl/wget/jq, notably for hitting cloud IMDS
+# ============================================================================
 ---
+# --- DOC 1: kdigger (reconnaissance) ----------------------------------------
+# kdigger enumerates the container/k8s context: mounted SA tokens, node info,
+# reachable services. First step of an in-cluster attack.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -7,28 +31,35 @@ metadata:
   namespace: attacker
   labels:
     app: kdigger
-    adversary-lab/tool-type: "recon"
+    adversary-lab/tool-type: "recon"                  # lab taxonomy: reconnaissance tooling
   annotations:
+    # T1552.007 SA-token theft, T1613 container/orchestration discovery,
+    # T1082 system info discovery, T1046 network service discovery
     adversary-lab/mitre-techniques: "T1552.007,T1613,T1082,T1046"
 spec:
-  serviceAccountName: red-team-operator
+  serviceAccountName: red-team-operator               # broad-RBAC attacker identity (see rbac.yaml)
   containers:
     - name: kdigger
-      image: docker.io/alpine:latest
+      image: docker.io/alpine:latest                  # minimal base; the real tool is fetched below
       command: ["/bin/sh", "-c"]
       args:
+        # Bootstrap: install curl, download the kdigger release, install it,
+        # then sleep so the operator can exec in and run `kdigger dig`.
         - |
           apk add --no-cache curl &&
           curl -fSL "https://github.com/quarkslab/kdigger/releases/download/v1.5.1/kdigger-linux-amd64.tar.gz" | tar -xz &&
           chmod +x kdigger-linux-amd64 &&
           mv kdigger-linux-amd64 /usr/local/bin/kdigger &&
           echo "kdigger ready. Run: kdigger dig" &&
-          sleep infinity
+          sleep infinity                               # keep the pod alive for interactive use
       resources:
         requests: { cpu: "100m", memory: "128Mi" }
         limits: { cpu: "500m", memory: "512Mi" }
-  restartPolicy: Never
+  restartPolicy: Never                                 # do not auto-restart a finished tool pod
 ---
+# --- DOC 2: cdk (container escape & exploitation) ---------------------------
+# CDK (Container DucK) evaluates and EXPLOITS container-escape paths and
+# misconfigurations. `cdk evaluate` fingerprints escape opportunities.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -36,8 +67,10 @@ metadata:
   namespace: attacker
   labels:
     app: cdk
-    adversary-lab/tool-type: "offensive"
+    adversary-lab/tool-type: "offensive"              # active exploitation, not just recon
   annotations:
+    # T1611 escape to host, T1610 deploy container, T1552.007 SA-token theft,
+    # T1046 network discovery, T1552.001 creds in files
     adversary-lab/mitre-techniques: "T1611,T1610,T1552.007,T1046,T1552.001"
 spec:
   serviceAccountName: red-team-operator
@@ -46,6 +79,7 @@ spec:
       image: docker.io/alpine:latest
       command: ["/bin/sh", "-c"]
       args:
+        # Download the single-binary CDK release, make it executable, then idle.
         - |
           apk add --no-cache curl &&
           curl -fSL -o /usr/local/bin/cdk "https://github.com/cdk-team/CDK/releases/download/v1.5.2/cdk_linux_amd64" &&
@@ -57,6 +91,9 @@ spec:
         limits: { cpu: "500m", memory: "512Mi" }
   restartPolicy: Never
 ---
+# --- DOC 3: peirates (Kubernetes penetration testing) -----------------------
+# Peirates automates k8s attack chains: harvest SA tokens, pivot between pods,
+# escalate privileges, and abuse the API. A menu-driven all-in-one attack tool.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -66,6 +103,8 @@ metadata:
     app: peirates
     adversary-lab/tool-type: "offensive"
   annotations:
+    # T1552.007/T1528 token theft, T1609 container admin command, T1611 escape,
+    # T1613 orchestration discovery, T1550.001 use of stolen tokens
     adversary-lab/mitre-techniques: "T1552.007,T1528,T1609,T1611,T1613,T1550.001"
 spec:
   serviceAccountName: red-team-operator
@@ -74,6 +113,8 @@ spec:
       image: docker.io/alpine:latest
       command: ["/bin/sh", "-c"]
       args:
+        # Peirates ships as an xz-compressed tarball, so xz is added; the binary
+        # is extracted to a temp dir, located, installed, then the pod idles.
         - |
           apk add --no-cache curl xz &&
           mkdir /tmp/p &&
@@ -87,6 +128,9 @@ spec:
         limits: { cpu: "500m", memory: "512Mi" }
   restartPolicy: Never
 ---
+# --- DOC 4: kubectl (Kubernetes API access) ---------------------------------
+# A plain kubectl pod. With the red-team-operator token it enumerates and
+# manipulates cluster resources — the attacker's hands on the k8s API.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -96,18 +140,23 @@ metadata:
     app: kubectl
     adversary-lab/tool-type: "utility"
   annotations:
+    # T1609 container admin command, T1613 discovery, T1552.007 token theft,
+    # T1098.006 additional-container-admin / RBAC abuse
     adversary-lab/mitre-techniques: "T1609,T1613,T1552.007,T1098.006"
 spec:
   serviceAccountName: red-team-operator
   containers:
     - name: kubectl
-      image: docker.io/bitnami/kubectl:latest
-      command: ["/bin/sh", "-c", "sleep infinity"]
+      image: docker.io/bitnami/kubectl:latest         # image already contains kubectl; no bootstrap needed
+      command: ["/bin/sh", "-c", "sleep infinity"]     # just idle for interactive exec
       resources:
         requests: { cpu: "100m", memory: "128Mi" }
         limits: { cpu: "500m", memory: "512Mi" }
   restartPolicy: Never
 ---
+# --- DOC 5: net-scanner (network discovery) ---------------------------------
+# An nmap pod for scanning the cluster's internal network — discovering the
+# victim services and other reachable hosts.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -117,18 +166,23 @@ metadata:
     app: net-scanner
     adversary-lab/tool-type: "recon"
   annotations:
-    adversary-lab/mitre-techniques: "T1046"
+    adversary-lab/mitre-techniques: "T1046"           # Network Service Discovery
 spec:
   serviceAccountName: red-team-operator
   containers:
     - name: scanner
-      image: docker.io/instrumentisto/nmap:latest
+      image: docker.io/instrumentisto/nmap:latest      # prebuilt nmap image
       command: ["/bin/sh", "-c", "sleep infinity"]
       resources:
         requests: { cpu: "100m", memory: "64Mi" }
         limits: { cpu: "500m", memory: "256Mi" }
   restartPolicy: Never
 ---
+# --- DOC 6: curler (HTTP utility / cloud metadata theft) --------------------
+# curl/wget/jq toolbox. Its headline use (shown in the echoed example) is
+# querying the Azure Instance Metadata Service at 169.254.169.254 to steal the
+# node's managed identity — a classic cloud-pivot. Falco has a rule for exactly
+# this (see helm/falco/values.yaml: "Pod Contacted Cloud Instance Metadata Service").
 apiVersion: v1
 kind: Pod
 metadata:
@@ -138,7 +192,7 @@ metadata:
     app: curler
     adversary-lab/tool-type: "utility"
   annotations:
-    adversary-lab/mitre-techniques: "T1552.005"
+    adversary-lab/mitre-techniques: "T1552.005"       # Unsecured Credentials: Cloud Instance Metadata API
 spec:
   serviceAccountName: red-team-operator
   containers:
@@ -146,6 +200,7 @@ spec:
       image: docker.io/alpine:latest
       command: ["/bin/sh", "-c"]
       args:
+        # Install HTTP tooling and print a ready-to-run IMDS theft example, then idle.
         - |
           apk add --no-cache curl wget jq &&
           echo "Ready. Example:" &&

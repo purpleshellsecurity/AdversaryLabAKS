@@ -4,16 +4,33 @@
 // Source: AKSAuditAdmin
 // ============================================================================
 
-// Minting a client cert through the CSR API. The strong signal is the SAME user
-// both CREATING the CSR and UPDATING its /approval subresource (self-approval) —
-// legitimate flows separate requester from approver.
+// HOW THIS DETECTION WORKS
+// -------------------------
+// Kubernetes lets you request a signed client certificate through the
+// CertificateSigningRequest (CSR) API: you `create` a CSR, then someone with
+// rights `update`s its /approval subresource, and the cluster CA signs it. A
+// signed client cert authenticates to the API server as whatever user/groups
+// the CSR named — so a self-approved CSR is a way to MINT durable credentials
+// (T1098 Account Manipulation / credential creation).
+//
+// The strong signal here is a SEPARATION-OF-DUTY violation: the SAME principal
+// both creates the CSR and approves it. Legitimate flows split requester from
+// approver (kubelet requests, certificate-controller approves).
+//
+// TABLE: AKSAuditAdmin — the "admin" slice of the Kubernetes audit log. It keeps
+//        WRITE/mutating events (create/update/delete) but not routine reads, so
+//        it is the right, cheaper table for approval-workflow tampering.
+
 AKSAuditAdmin
-| where TimeGenerated > ago(1h)
-| where ObjectRef.resource == "certificatesigningrequests"
+| where TimeGenerated > ago(1h)                                       // prune to the recent window first
+| where ObjectRef.resource == "certificatesigningrequests"           // only CSR API objects
+// Keep BOTH halves of the flow: the initial create, AND updates that hit the
+// /approval subresource (the moment a CSR is signed off). Either alone is noise;
+// the pair from one user is the finding.
 | where (Verb == "create") or (Verb == "update" and ObjectRef.subresource == "approval")
 // Tune: kubelets create CSRs and certificate-controller approves them — both system:*.
-| where User.username !startswith "system:"
-| project TimeGenerated, User = tostring(User.username), Verb,
+| where User.username !startswith "system:"                          // drop built-in control-plane actors
+| project TimeGenerated, User = tostring(User.username), Verb,       // project = keep just these columns...
           Sub = tostring(ObjectRef.subresource), CSR = tostring(ObjectRef.name), RequestUri
 | sort by TimeGenerated asc   // create then approval from one user = self-signed credential
-| extend MitreTechnique = "T1098"
+| extend MitreTechnique = "T1098"    // tag hits with the ATT&CK technique

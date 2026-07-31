@@ -24,14 +24,28 @@
 // connections between namespaces that normally never talk. Baseline the legitimate
 // pairs first, then alert on the rest.
 
+// HOW THIS DETECTION WORKS (once the flow-log plane exists)
+// ---------------------------------------------------------
+// Unlike the other detections, this reads the NETWORK plane (pod-to-pod flow logs
+// from Cilium/Hubble), not the API audit log. The idea: an attacker mapping the
+// cluster or pivoting between workloads opens NEW east-west connections between
+// namespaces that normally never talk (T1046 Network Service Discovery). We keep
+// only cross-namespace, successfully-forwarded flows and roll them up per pod-pair.
+//
+// TABLE: RetinaNetworkFlowLogs — PLACEHOLDER name; confirm against the real
+//        Container Network Logs schema before trusting this.
+
 // CONFIRM the table name once Container Network Logs are enabled (placeholder):
 RetinaNetworkFlowLogs
-| where TimeGenerated > ago(1h)
-| where FlowType == "L3_L4"            // adjust to real schema
-| where Verdict == "FORWARDED"
+| where TimeGenerated > ago(1h)        // recent window first
+| where FlowType == "L3_L4"            // adjust to real schema — keep network-layer connection flows
+| where Verdict == "FORWARDED"         // only flows the network policy ALLOWED (a real connection happened)
 | where SourceNamespace != DestinationNamespace          // cross-namespace = east-west
 | where SourceNamespace !in ("kube-system", "gatekeeper-system")   // baseline / allowlist
+// summarize = aggregate. Per (source pod, dest pod, 5-min bucket) count the flows
+// and collect the DISTINCT destination ports touched (make_set) — a pod hitting
+// many ports on a peer looks like scanning/discovery.
 | summarize Flows = count(), Ports = make_set(DestinationPort)
         by SourceNamespace, SourcePod = SourcePodName,
-           DestinationNamespace, DestinationPod = DestinationPodName, bin(TimeGenerated, 5m)
-| extend MitreTechnique = "T1046"
+           DestinationNamespace, DestinationPod = DestinationPodName, bin(TimeGenerated, 5m)  // bin() = fixed 5-min time buckets
+| extend MitreTechnique = "T1046"    // tag with the ATT&CK technique
