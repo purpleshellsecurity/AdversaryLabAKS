@@ -1,18 +1,39 @@
+# =============================================================================
+# validate.yaml — Continuous Integration (CI) gate
+# =============================================================================
+# Runs AUTOMATICALLY on every PR to main and every push to main. It only inspects
+# files in the repo — it NEVER logs into Azure or changes any cloud resource
+# (note: no `permissions: id-token` and no `azure/login` anywhere below). That is
+# what makes it safe to run on every commit. Its job is to answer: "is the code
+# in this repo correct and safe to merge?"
+#
+# Full walkthrough: docs/WORKFLOWS-EXPLAINED.md
+# =============================================================================
 name: Validate AKS Adversary Lab
 
+# ── Triggers ─────────────────────────────────────────────────────────────────
+# Runs while you iterate on a PR (pull_request) and again after it merges (push).
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
 
+# ── Concurrency ──────────────────────────────────────────────────────────────
+# One run "slot" per workflow+branch. cancel-in-progress: true means a newer push
+# CANCELS the older still-running validation — you only care about the latest
+# commit's result, so this saves runner minutes. (deploy.yaml does the opposite.)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   # ── Stage 1: Parallel validation ─────────────────────────────────────────
+  # Every job below runs on its own fresh VM, all at once (no `needs:`), because
+  # they're independent. Stages 2 and 3 further down each wait on one of these.
 
+  # Compiles all Bicep. `az bicep build` fails on syntax errors and surfaces
+  # linter warnings — catches broken IaC in seconds instead of mid-deploy.
   bicep-validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -39,6 +60,10 @@ jobs:
             az bicep build --file "$f"
           done
 
+  # Lints all PowerShell with PSScriptAnalyzer at Warning+Error severity, failing
+  # the job on any finding. The $excludeRules list below is the set of rules we
+  # deliberately silence because they don't fit this repo's style (e.g. we use
+  # Write-Host on purpose for colored output) — each one is an intentional choice.
   powershell-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -80,6 +105,10 @@ jobs:
 
           Write-Host "No issues found!" -ForegroundColor Green
 
+  # Scans git history for leaked secrets with TruffleHog. fetch-depth: 0 pulls the
+  # ENTIRE history (not just the latest commit) so every past commit is scanned.
+  # --only-verified fails ONLY on secrets it can actively confirm are live, which
+  # keeps false positives near zero — a random-looking string won't break the build.
   secret-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -96,6 +125,9 @@ jobs:
           path: ./
           extra_args: --only-verified
 
+  # Validates every K8s manifest under kubernetes/ against the 1.34 API schemas.
+  # -strict rejects unknown fields (catches typos in field names);
+  # -ignore-missing-schemas tolerates CRDs (Falco, Sentinel) kubeconform can't know.
   k8s-validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -120,6 +152,10 @@ jobs:
               "$f"
           done
 
+  # Renders the Falco Helm chart and greps the OUTPUT to prove the lab's custom
+  # rules actually made it in. Why grep? A mis-nested value in values.yaml makes
+  # Helm silently DROP the custom rules without erroring — this turns that silent
+  # drop into a loud CI failure.
   helm-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -141,6 +177,10 @@ jobs:
             && echo "Falco chart valid (custom rules present)" \
             || { echo "ERROR: rendered chart is missing custom rules"; exit 1; }
 
+  # STRUCTURAL check of every KQL + Falco rule: required fields present, MITRE
+  # ATT&CK IDs mapped, files well-formed. Answers "is this rule authored
+  # correctly?" — NOT "does the query actually detect the attack?" (that's the
+  # next job, detection-logic-test).
   detection-validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -172,6 +212,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # `services:` starts a REAL Kusto engine (the same query engine Log Analytics
+    # uses) as a sidecar container. The test binds recorded event fixtures to the
+    # audit table name via `let ... datatable()`, then runs the UNMODIFIED shipped
+    # .kql against them — asserting it fires on the malicious sample and stays
+    # silent on the benign one. True end-to-end logic test, no cluster required.
     services:
       kusto:
         image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
@@ -192,6 +237,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r tools/detection-tester/requirements.txt
 
+      # --wait-seconds 180 gives the Kusto container time to become ready.
       - name: Run KQL detection logic tests
         env:
           KUSTO_ENDPOINT: http://localhost:8080
@@ -202,6 +248,8 @@ jobs:
             --repo-root . \
             --wait-seconds 180
 
+  # Bandit = Python static-analysis security scanner over tools/. -ll limits it to
+  # medium-severity-and-above findings.
   python-sast:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -224,6 +272,10 @@ jobs:
         # -ll = only medium severity and above
         # Switch to CodeQL when repo goes public (requires GHAS on private repos)
 
+  # Reads docs/security-exceptions.yaml and emits ::warning:: annotations for any
+  # time-boxed exception past its expiration date. NEVER fails the build (the
+  # script always exits 0) — it's a "warn, don't gate" nudge so accepted risks
+  # don't silently live forever. Entries with expiration_date: none are skipped.
   exception-check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -244,6 +296,10 @@ jobs:
         run: python3 tools/check-exceptions.py
 
   # ── Stage 2: IaC scanning (needs bicep-validate) ─────────────────────────
+  # Checkov = static misconfiguration scanner for the Bicep. soft_fail: true means
+  # it REPORTS but never fails the build — this lab intentionally ships some
+  # insecure-by-design infra (it's meant to be attacked). `needs: bicep-validate`
+  # so it only runs once the Bicep is known to compile.
 
   iac-scan:
     runs-on: ubuntu-latest
@@ -262,6 +318,10 @@ jobs:
           soft_fail: true
 
   # ── Stage 3: Container scanning ──────────────────────────────────────────
+  # Trivy = container CVE scanner. Scans Juice Shop (the deliberately-vulnerable
+  # "victim" app), so exit-code: 0 makes it a SOFT fail — flagging its CVEs as
+  # build failures would be nonsensical. Flip to exit-code: 1 when scanning your
+  # OWN images. `needs: k8s-validate` for the same gating reason as Stage 2.
 
   trivy-scan:
     runs-on: ubuntu-latest

@@ -88,6 +88,8 @@ aks-adversary-lab/
 
 Every pull request and push to `main` runs `validate.yaml` automatically. The deploy workflow is always manual — nothing deploys to Azure without you clicking a button.
 
+> 📖 **New to these workflows?** [`docs/WORKFLOWS-EXPLAINED.md`](docs/WORKFLOWS-EXPLAINED.md) is a line-by-line walkthrough of both workflow files — triggers, jobs, the OIDC auth model, deploy/destroy ordering, and the patterns behind them. The workflow YAML files themselves also carry inline explanatory comments.
+
 ### Validation Pipeline (`validate.yaml`)
 
 | Job | Tool | What it checks |

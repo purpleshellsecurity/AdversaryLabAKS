@@ -1,5 +1,24 @@
+# =============================================================================
+# deploy.yaml — build OR tear down the live AKS lab in Azure
+# =============================================================================
+# Runs ONLY when a human clicks "Run workflow" (workflow_dispatch) and fills the
+# form below. Unlike validate.yaml, this workflow authenticates to Azure and
+# changes real cloud resources. A single form field — `action` — chooses whether
+# it deploys or destroys.
+#
+# Auth model (no passwords anywhere): it logs in via OIDC federated credentials.
+# `permissions: id-token: write` lets the job request a short-lived GitHub OIDC
+# token; `azure/login@v2` presents that token to Azure; Azure trusts it because
+# `tools/setup-oidc.ps1` pre-registered a federated credential scoped to this repo
+# + the `lab` environment. The AZURE_* "secrets" are just identifiers, not keys.
+# That's why every job below declares `environment: lab`.
+#
+# Full walkthrough: docs/WORKFLOWS-EXPLAINED.md
+# =============================================================================
 name: Deploy AKS Adversary Lab
 
+# ── Trigger: a manual form ───────────────────────────────────────────────────
+# workflow_dispatch = manual-only. Each `inputs:` entry becomes a form field.
 on:
   workflow_dispatch:
     inputs:
@@ -39,18 +58,34 @@ on:
         required: false
         type: string
 
+# ── Concurrency ──────────────────────────────────────────────────────────────
+# Fixed group (not per-branch) and cancel-in-progress: FALSE — the deliberate
+# opposite of validate.yaml. You must NEVER interrupt a half-finished deploy or
+# destroy (that could leave Azure in a broken state), so concurrent runs QUEUE
+# and wait their turn instead of cancelling.
 concurrency:
   group: deploy-lab
   cancel-in-progress: false
 
+# ── Permissions ──────────────────────────────────────────────────────────────
+# id-token: write  → allowed to request the OIDC token used to log into Azure.
+# contents: read   → allowed to check out the repo. Nothing more is granted.
 permissions:
   id-token: write
   contents: read
 
+# ── Workflow-wide variable ───────────────────────────────────────────────────
+# Derived once from name_prefix so every job/step names the RG identically.
 env:
   RESOURCE_GROUP: rg-${{ github.event.inputs.name_prefix }}-aks-lab
 
 jobs:
+  # ── Job 1 of 3: preflight ──────────────────────────────────────────────────
+  # ALWAYS runs first. Validates the form inputs and confirms Azure access BEFORE
+  # spending 15+ minutes on a deploy. Steps 1-3 need no cloud (pure input checks);
+  # steps 4-6 do a cheap Azure round-trip. Nothing is created here.
+  # `environment: lab` gates the job behind the lab environment's approval and
+  # scopes the OIDC credential.
   preflight:
     name: Preflight checks
     runs-on: ubuntu-latest
@@ -68,6 +103,10 @@ jobs:
           fi
           echo "✓ Name prefix valid: $PREFIX"
 
+      # authorized_ip becomes the AKS API server's allowlist, so it MUST be your
+      # real PUBLIC IP. This step checks CIDR shape, rejects octets > 255, and
+      # rejects private/reserved ranges (RFC1918, loopback, link-local, multicast,
+      # reserved) — a private IP here would lock you out or be meaningless.
       - name: Validate IP range
         run: |
           IP="${{ github.event.inputs.authorized_ip }}"
@@ -112,6 +151,9 @@ jobs:
 
           echo "✓ IP range valid (public): $IP"
 
+      # Only runs IF you supplied an existing workspace. Regex-checks it's a valid
+      # Log Analytics resource ID. nocasematch handles Azure's inconsistent casing
+      # (resourceGroups vs resourcegroups).
       - name: Validate existing workspace ID format
         if: github.event.inputs.existing_workspace_id != ''
         run: |
@@ -127,6 +169,7 @@ jobs:
           echo "✓ Existing workspace ID valid"
           echo "  Using workspace: $(echo $WS | awk -F'/' '{print $NF}')"
 
+      # First real cloud contact — OIDC login, no stored password (see header).
       - name: Azure login
         uses: azure/login@v2
         with:
@@ -134,6 +177,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Proves the OIDC login actually worked and prints which subscription we're in.
       - name: Verify Azure access
         run: |
           az account show --query "{subscription:name, id:id, tenant:tenantId}" -o table
@@ -149,6 +193,11 @@ jobs:
           }
           echo "✓ Workspace verified: $RESULT"
 
+  # ── Job 2 of 3: deploy ─────────────────────────────────────────────────────
+  # Runs ONLY if action == 'deploy'. Builds the whole stack in dependency order:
+  # Bicep infra → K8s namespaces → RBAC → network policies → Falco → monitoring →
+  # victim apps → red-team tools. Runs on a FRESH VM, so it re-checks-out and
+  # re-logs-in (nothing carries over from preflight).
   deploy:
     name: Deploy lab
     runs-on: ubuntu-latest
@@ -199,6 +248,10 @@ jobs:
               DeployedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "✓ Resource group ready: ${{ env.RESOURCE_GROUP }}"
 
+      # The big one: AKS cluster, ACR, Key Vault, Log Analytics, networking,
+      # policies. `id: bicep` + writing to $GITHUB_OUTPUT below exports the
+      # deployment outputs (cluster name, workspace id, ACR, Key Vault, ...) so
+      # every LATER step can read them via steps.bicep.outputs.*.
       - name: Deploy main stack (Bicep)
         id: bicep
         run: |
@@ -231,6 +284,10 @@ jobs:
 
           echo "✓ Main stack deployed"
 
+      # A SECOND, separate Bicep deploy at SUBSCRIPTION scope (not RG scope) for
+      # things that live above the resource group: Defender for Cloud plans and
+      # activity-log forwarding. Forwarding is only enabled when creating a NEW
+      # workspace (if you brought your own, it assumes that's already wired up).
       - name: Deploy subscription-scope resources
         run: |
           if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
@@ -249,6 +306,11 @@ jobs:
             --query "properties.provisioningState" -o tsv
           echo "✓ Subscription-scope resources deployed"
 
+      # The Bicep locked the API server to YOUR authorized_ip, but this GitHub
+      # runner has a different IP and needs kubectl access. So: discover the
+      # runner's public IP and APPEND it to the allowlist (note the trailing
+      # ,${RUNNER_IP}/32 — it adds, doesn't clobber your IP). The final step of
+      # this job removes it again (grant-then-revoke).
       - name: Allowlist runner IP on AKS API server
         id: runner_ip
         run: |
@@ -280,6 +342,11 @@ jobs:
           kubectl cluster-info
           echo "✓ kubectl configured"
 
+      # ── K8s layers applied in dependency order ──────────────────────────────
+      # namespaces → rbac → network-policies → Falco → monitoring → victim → red
+      # team. Order matters: namespaces must exist before things go in them; RBAC
+      # and network policy should exist before workloads; and Falco (the runtime
+      # detector) should be watching BEFORE the victim/attacker workloads start.
       - name: Apply namespaces
         run: |
           kubectl apply -f kubernetes/namespaces/
@@ -341,6 +408,10 @@ jobs:
           echo ""
           kubectl get pods -A --field-selector=status.phase=Running 2>/dev/null | head -30
 
+      # Counterpart to the earlier "Allowlist runner IP" step. `if: always()` means
+      # this runs EVEN IF an earlier step failed — it restores the allowlist to
+      # your original authorized_ip, closing the runner's temporary access. The
+      # runner's window into the API server is open only for this job's duration.
       - name: Remove runner IP from AKS allowlist
         if: always() && steps.runner_ip.outputs.ip != ''
         run: |
@@ -352,6 +423,12 @@ jobs:
             || echo "⚠️  Failed to restore allowlist — may need manual cleanup"
           echo "✓ Allowlist restored to original ($ORIGINAL_RANGES)"
 
+  # ── Job 3 of 3: destroy ────────────────────────────────────────────────────
+  # Runs ONLY if action == 'destroy'. It's more than one `az group delete` because
+  # two things fight a naive delete: (1) the AKS node RG has a ReadOnly lock — see
+  # the comment on the cluster-delete step below — and (2) a subscription-scope
+  # policy assignment lives ABOVE the RG and survives its deletion. This job
+  # handles both, in the right order, and is safe to re-run (idempotent).
   destroy:
     name: Destroy lab
     runs-on: ubuntu-latest
@@ -418,6 +495,9 @@ jobs:
             echo "· Resource group not found — already deleted or never created"
           fi
 
+      # The 'aks-lab-mitre-logging' policy assignment lives at SUBSCRIPTION scope,
+      # above the RG, so deleting the RG doesn't remove it. Without this cleanup,
+      # repeated deploy/destroy cycles would leave dangling policy assignments.
       - name: Clean up orphaned policy assignments
         run: |
           echo "Checking for orphaned subscription-scope policy assignments..."
