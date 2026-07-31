@@ -360,7 +360,7 @@ jobs:
         run: kubectl apply -f kubernetes/network-policies/
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       - name: Deploy Falco
         run: |
