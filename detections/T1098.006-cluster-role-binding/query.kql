@@ -8,25 +8,30 @@
 // almost always suspicious. In a production cluster you'd add Argo/Flux/Helm
 // controllers to the exclusion list — for the lab, only K8s system controllers
 // are excluded.
+//
+// This is the DETECTION half of the T1098.006 bundle. attack.sh creates a
+// ClusterRoleBinding; the API server logs that write to AKSAudit; this query finds
+// it; rule.bicep runs this query on a schedule as a Sentinel alert.
 
 AKSAudit
-| where TimeGenerated > ago(1h)
-| where Stage == "ResponseComplete"
-| where Verb in ("create", "update", "patch")
-| extend
-    Username     = tostring(User.username),
-    Resource     = tostring(ObjectRef.resource),
-    Namespace    = tostring(ObjectRef.namespace),
-    BindingName  = tostring(ObjectRef.name),
-    ResponseCode = toint(ResponseStatus.code),
-    SourceIp     = tostring(SourceIps[0])
-| where Resource in ("clusterrolebindings", "rolebindings")
-| where ResponseCode between (200 .. 299)
-// Exclude stable system actors
+| where TimeGenerated > ago(1h)                       // recent window first
+| where Stage == "ResponseComplete"                   // one audit event has multiple stages; keep the final one so we don't double-count
+| where Verb in ("create", "update", "patch")         // any mutation that could establish a binding
+| extend                                              // extend = compute new columns by flattening the nested audit JSON:
+    Username     = tostring(User.username),            //   who made the call
+    Resource     = tostring(ObjectRef.resource),       //   what kind of object
+    Namespace    = tostring(ObjectRef.namespace),      //   its namespace (empty for cluster-scoped)
+    BindingName  = tostring(ObjectRef.name),           //   the binding's name
+    ResponseCode = toint(ResponseStatus.code),         //   HTTP status the API server returned
+    SourceIp     = tostring(SourceIps[0])              //   caller IP (first in the list)
+| where Resource in ("clusterrolebindings", "rolebindings")  // only RBAC binding objects
+| where ResponseCode between (200 .. 299)             // only calls that actually SUCCEEDED (2xx)
+// Exclude stable system actors — kube-system SAs, node kubelets, and the built-in
+// controller-manager legitimately create bindings; alert on everyone else.
 | where not(Username startswith "system:serviceaccount:kube-system:")
 | where not(Username startswith "system:node:")
 | where Username != "system:kube-controller-manager"
-| project
+| project                                             // keep just the columns an analyst needs
     TimeGenerated, Username, Verb, Resource, BindingName, Namespace,
     SourceIp, UserAgent
-| extend MitreTechnique = "T1098.006"
+| extend MitreTechnique = "T1098.006"    // tag hits with the ATT&CK sub-technique

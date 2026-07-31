@@ -1,10 +1,27 @@
 # =============================================================================
 # AKS Adversary Lab - Logging Smoke Test
 # =============================================================================
-# Confirms the telemetry pipeline is flowing end to end before you tear the lab
-# down. Generates known control-plane + container activity (tagged with a unique
-# marker), then polls Log Analytics until each expected table shows that activity.
-# Prints PASS/FAIL per table and exits non-zero if anything is missing.
+# PURPOSE
+#   Detection engineering is worthless if the telemetry never arrives. This is a
+#   smoke test that PROVES the logging pipeline works end to end before you rely
+#   on it (to run attack simulations) or tear the lab down.
+#
+# HOW IT PROVES IT
+#   1. It performs a few known Kubernetes actions (create a pod, list secrets)
+#      tagged with a unique per-run MARKER string.
+#   2. It then polls Log Analytics, looking specifically for THAT marker in each
+#      expected table — not just "any data". Finding the marker proves OUR action
+#      traversed: kube-apiserver -> diagnostic settings -> Log Analytics ingestion.
+#   3. It prints PASS/FAIL per table and exits non-zero if any table stayed empty,
+#      so it can gate CI or a runbook step.
+#
+# WHY A MARKER (not just "row count > 0")
+#   A busy cluster always has ambient traffic, so "the table has rows" could be
+#   stale/unrelated data. A unique marker removes that ambiguity — it can only be
+#   there if this run's activity actually flowed through.
+#
+# INGESTION LAG: Log Analytics typically lags 5-10 minutes, so the script polls
+#   with a timeout (default 15m) rather than checking once.
 #
 # Usage:
 #   ./verify-logging.ps1 -ResourceGroupName "rg-purpleshell-aks-lab"
@@ -18,28 +35,39 @@
 
 [CmdletBinding()]
 param(
+    # -- Required. Resource group holding the Log Analytics workspace (and cluster). --
     [Parameter(Mandatory)]
     [string]$ResourceGroupName,
 
+    # Optional explicit workspace name; auto-resolved if the RG has exactly one.
     [Parameter()]
     [string]$WorkspaceName,
 
+    # Optional cluster name. When set, the script refuses to run if kubectl's
+    # current context doesn't reference it — a guard against generating activity
+    # on the WRONG cluster.
     [Parameter()]
     [string]$ClusterName,
 
+    # Namespace the test pod is created in.
     [Parameter()]
     [string]$Namespace = "default",
 
+    # The tables that must show data for the pipeline to be considered healthy.
     [Parameter()]
     [string[]]$Tables = @("AKSAudit", "AKSAuditAdmin", "AKSControlPlane", "ContainerLogV2"),
 
+    # How long to keep polling before declaring a table failed (ingestion lag).
     [Parameter()]
     [int]$TimeoutMinutes = 15,
 
+    # Skip generating activity and just check for any recent rows — useful when
+    # telemetry already exists and you only want to confirm ingestion is flowing.
     [Parameter()]
     [switch]$SkipActivity
 )
 
+# Abort on first error so we don't, e.g., poll a workspace we failed to resolve.
 $ErrorActionPreference = "Stop"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

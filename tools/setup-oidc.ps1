@@ -208,10 +208,15 @@ foreach ($cred in $federatedCredentials) {
 }
 
 # ── Role Assignments ──────────────────────────────────────────────────────────
+# Grant the Service Principal the Azure RBAC roles it needs to deploy the lab.
+# Scope is chosen carefully: prefer the resource group, but fall back to the
+# subscription where the Bicep genuinely needs it (policy + role assignments).
 
 Write-Step "Assigning roles"
 
-# Ensure resource group exists (create if not — idempotent)
+# If the target RG already exists, scope Contributor to it (least privilege). If
+# not, the identity must be able to CREATE the RG, which requires subscription
+# scope — so we widen the Contributor scope accordingly.
 $rg = Get-AzResourceGroup -Name $ResourceGroupName -ErrorAction SilentlyContinue
 if (-not $rg) {
     Write-Info "Resource group '$ResourceGroupName' not found — it will be created at deploy time"
@@ -243,6 +248,8 @@ $roleAssignments = @(
 )
 
 foreach ($assignment in $roleAssignments) {
+    # Check for the exact (principal, role, scope) triple first so re-running the
+    # script doesn't stack duplicate assignments.
     $existing = Get-AzRoleAssignment `
         -ObjectId $sp.Id `
         -RoleDefinitionName $assignment.Role `
@@ -264,6 +271,10 @@ foreach ($assignment in $roleAssignments) {
 }
 
 # ── Output GitHub Secrets ─────────────────────────────────────────────────────
+# These three values wire the workflow to this identity. Note they aren't
+# sensitive — with OIDC there's no password to protect; a client id is useless
+# without a matching federated credential — but they're stored as repo secrets by
+# convention. Print them so the user can copy them if `gh` isn't available.
 
 Write-Step "GitHub Secrets — add these to your repo"
 Write-Host ""
@@ -271,21 +282,25 @@ Write-Host "  Repository Settings → Secrets and variables → Actions → New 
 Write-Host ""
 
 $secrets = @(
-    @{ Name = "AZURE_CLIENT_ID";       Value = $app.AppId }
-    @{ Name = "AZURE_TENANT_ID";       Value = $tenantId }
-    @{ Name = "AZURE_SUBSCRIPTION_ID"; Value = $subscriptionId }
+    @{ Name = "AZURE_CLIENT_ID";       Value = $app.AppId }        # the App Registration's id
+    @{ Name = "AZURE_TENANT_ID";       Value = $tenantId }         # which Entra tenant to auth against
+    @{ Name = "AZURE_SUBSCRIPTION_ID"; Value = $subscriptionId }   # where the lab gets deployed
 )
 
 foreach ($secret in $secrets) {
+    # "{0,-30}" left-pads the name to 30 cols so the values line up in a column.
     Write-Host ("  {0,-30} {1}" -f $secret.Name, $secret.Value) -ForegroundColor White
 }
 
 Write-Host ""
 
 # ── Optional: GitHub CLI auto-set ────────────────────────────────────────────
+# Convenience: if the GitHub CLI is installed and authenticated, push the three
+# values straight into the repo so the user doesn't have to copy them by hand.
 
 Write-Step "Attempting to set secrets via GitHub CLI (gh)"
 
+# Get-Command returns null (not an error) when gh isn't on PATH.
 $ghInstalled = Get-Command gh -ErrorAction SilentlyContinue
 
 if ($ghInstalled) {
