@@ -3,16 +3,34 @@
 # MITRE ATT&CK: T1611 - Escape to Host
 # ============================================================================
 
+# HOW THIS RULE WORKS
+# -------------------
+# Falco watches the kernel's syscall stream. `nsenter` attaches a process to
+# another process's Linux namespaces; run inside a privileged container against
+# PID 1's namespaces it drops the attacker onto the HOST — a container escape
+# (T1611). This is the real-time syscall counterpart to the log-based
+# detections/kql/container-escape.kql query.
+
+# NOTE ON COMMENTS: condition/output below are YAML block scalars (`>`), so their
+# indented lines are literal text — a `#` there would become part of the rule, not
+# a comment. All explanations therefore sit on full lines between the mapping keys.
+
 - rule: Container Escape via nsenter
   desc: Detects nsenter execution which may indicate container escape (MITRE T1611)
+  # condition = the match logic. It ANDs three facts about the syscall event:
+  #   spawned_process -> a new process was exec'd (Falco macro over execve)
+  #   container       -> it happened inside a container, not on the host
+  #   proc.name = nsenter -> the new process is `nsenter`, the escape tool
   condition: >
     spawned_process and
     container and
     proc.name = nsenter
+  # output = the alert text; %-tokens are substituted from event + k8s metadata
+  # (who ran it, the full command line, and which container/pod/namespace/image).
   output: >
     nsenter executed in container — possible escape attempt
     (user=%user.name command=%proc.cmdline
      container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
      image=%container.image.repository:%container.image.tag)
-  priority: CRITICAL
-  tags: [mitre_privilege_escalation, T1611]
+  priority: CRITICAL   # highest Falco severity — a live escape attempt
+  tags: [mitre_privilege_escalation, T1611]   # ATT&CK tactic + technique labels

@@ -1,17 +1,40 @@
-# Monitoring Namespace Network Policies
+# ============================================================================
+# AKS Adversary Lab - Monitoring Namespace Network Policies
+# ----------------------------------------------------------------------------
+# PURPOSE: Network segmentation for the BLUE-TEAM `monitoring` namespace.
+#   Monitoring must be able to reach OUT to every namespace to scrape metrics,
+#   while its own dashboards/servers accept only the specific ports they serve.
+# NETWORK POLICY PRIMER: a NetworkPolicy is allow-list only (there is no deny).
+#   A pod is "isolated" for a direction once ANY policy with that policyType
+#   selects it; then only the listed traffic is permitted. `podSelector: {}`
+#   selects every pod in the namespace.
+# Documents (3 policies):
+#   1. allow-scrape-egress     - let all monitoring pods egress anywhere (to scrape)
+#   2. allow-grafana-ingress   - accept Grafana UI traffic on 3000
+#   3. allow-prometheus-ingress- accept Prometheus traffic on 9090
+# ============================================================================
 ---
+# --- DOC 1: allow-scrape-egress ---------------------------------------------
+# Applies to ALL monitoring pods (podSelector {}). `egress: - {}` is an empty
+# rule = ALLOW ALL OUTBOUND. Intentionally broad so Prometheus can reach targets
+# in the victim namespace (and anywhere else) to pull metrics. This is a
+# deliberate exception to segmentation, justified by the monitoring role.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-scrape-egress
   namespace: monitoring
 spec:
-  podSelector: {}
+  podSelector: {}                 # every pod in the monitoring namespace
   policyTypes:
-    - Egress
+    - Egress                      # only govern outbound; ingress left to other policies
   egress:
-    - {}
+    - {}                          # empty rule = permit all egress destinations/ports
 ---
+# --- DOC 2: allow-grafana-ingress -------------------------------------------
+# Restricts inbound to Grafana pods: only TCP/3000 (the Grafana web UI). Any
+# source may connect (no `from:` given) but only on that one port — a targeted
+# ingress control rather than allow-all.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,14 +43,17 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: grafana
+      app: grafana                # only pods labelled app=grafana
   policyTypes:
     - Ingress
   ingress:
     - ports:
         - protocol: TCP
-          port: 3000
+          port: 3000              # Grafana dashboard port
 ---
+# --- DOC 3: allow-prometheus-ingress ----------------------------------------
+# Same pattern for Prometheus: inbound allowed only on TCP/9090 (the Prometheus
+# server/UI + query API).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -36,10 +62,10 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: prometheus
+      app: prometheus             # only pods labelled app=prometheus
   policyTypes:
     - Ingress
   ingress:
     - ports:
         - protocol: TCP
-          port: 9090
+          port: 9090              # Prometheus server port

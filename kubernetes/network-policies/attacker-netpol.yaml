@@ -1,21 +1,43 @@
-# Attacker Namespace Network Policies
+# ============================================================================
+# AKS Adversary Lab - Attacker Namespace Network Policies
+# ----------------------------------------------------------------------------
+# PURPOSE: Segmentation for the red-team `attacker` namespace. The stance is the
+#   MIRROR of the victim's: attackers get unrestricted OUTBOUND reach (to attack
+#   targets and pivot to cloud metadata), while inbound to the attacker pods is
+#   locked down so the "victims" can't reach back into the attacker's toolkit.
+# Documents (2 policies):
+#   1. allow-all-egress    - permissive: let attacker pods talk to anything
+#   2. deny-victim-ingress - block inbound from the victim/target namespace
+# ============================================================================
 ---
+# --- DOC 1: allow-all-egress ------------------------------------------------
+# INTENTIONALLY PERMISSIVE (labelled policy-type=permissive). Every attacker pod
+# may egress anywhere: to the victim web apps, out to GitHub to pull tooling, and
+# to the Azure IMDS endpoint (169.254.169.254). This unrestricted egress is what
+# ENABLES the attacks the annotation references (T1046 network discovery,
+# T1550.001 use of stolen tokens). Not a control — a deliberate enabler.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-all-egress
   namespace: attacker
   labels:
-    adversary-lab/policy-type: "permissive"
+    adversary-lab/policy-type: "permissive"          # flags this as an intentional weak spot
   annotations:
     adversary-lab/mitre: "Enables T1046, T1550.001"
 spec:
-  podSelector: {}
+  podSelector: {}                 # all attacker pods
   policyTypes:
     - Egress
   egress:
-    - {}
+    - {}                          # empty rule = allow all outbound
 ---
+# --- DOC 2: deny-victim-ingress ---------------------------------------------
+# Another allow-rule with a "deny" name. It permits inbound to attacker pods from
+# every namespace whose role is NOT "target", i.e. it withholds the allowance
+# from the victim namespace. Effect: victim workloads cannot initiate
+# connections into the attacker's tooling, modelling one-directional
+# attacker->victim flow (attackers reach in; victims can't reach back).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -30,6 +52,6 @@ spec:
         - namespaceSelector:
             matchExpressions:
               - key: adversary-lab/role
-                operator: NotIn
+                operator: NotIn          # allow sources whose role is NOT in the list
                 values:
-                  - "target"
+                  - "target"             # => victim namespace is excluded (blocked)

@@ -1,16 +1,40 @@
-# Victim Namespace Network Policies
+# ============================================================================
+# AKS Adversary Lab - Victim Namespace Network Policies
+# ----------------------------------------------------------------------------
+# PURPOSE: Segmentation controls around the vulnerable TARGET workloads. The
+#   design is deny-by-default, then punch narrow holes for the traffic the lab
+#   needs (DNS, web exposure, monitoring scrape).
+# KEY IDEA: NetworkPolicies are purely ADDITIVE allow-lists — there is no deny
+#   rule. Once `default-deny-all` isolates every pod, a pod can only receive/send
+#   traffic that some later policy explicitly permits. "Denial" of a source is
+#   achieved by simply never allowing it.
+# Documents (5 policies):
+#   1. default-deny-all       - isolate all victim pods (ingress + egress)
+#   2. allow-dns              - re-allow DNS egress (or nothing resolves)
+#   3. allow-web-ingress      - expose web ports on `expose=web` pods
+#   4. allow-monitoring-scrape- let blue-team scrape metrics
+#   5. deny-attacker-ingress  - allow non-red-team sources (see caveat on that doc)
+# ============================================================================
 ---
+# --- DOC 1: default-deny-all ------------------------------------------------
+# The foundation. Selects ALL victim pods and declares both Ingress and Egress
+# policy types with NO allow rules => everything is denied by default. Every
+# other policy below re-opens specific paths on top of this baseline.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-all
   namespace: victim
 spec:
-  podSelector: {}
+  podSelector: {}                 # all pods in victim
   policyTypes:
-    - Ingress
-    - Egress
+    - Ingress                     # isolate inbound...
+    - Egress                      # ...and outbound (no rules => deny all)
 ---
+# --- DOC 2: allow-dns -------------------------------------------------------
+# Without this, default-deny-all would block DNS and the apps couldn't resolve
+# anything. Re-allows egress to port 53 (UDP+TCP). `to: []` = to ANY destination
+# (kube-dns lives in kube-system, so restricting destination would be fragile).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -21,13 +45,18 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - to: []
+    - to: []                      # any destination
       ports:
         - protocol: UDP
-          port: 53
+          port: 53                # DNS over UDP (normal case)
         - protocol: TCP
-          port: 53
+          port: 53                # DNS over TCP (large responses / zone transfers)
 ---
+# --- DOC 3: allow-web-ingress -----------------------------------------------
+# Opens the web ports ONLY on pods labelled adversary-lab/expose=web (DVWA,
+# Juice Shop, vulnerable-api). No `from:` is given, so ANY source — including the
+# attacker namespace — may reach these ports. That is intentional: the whole
+# point is for red-team tools to attack these web apps.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -36,40 +65,52 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      adversary-lab/expose: "web"
+      adversary-lab/expose: "web" # only the deliberately-exposed apps
   policyTypes:
     - Ingress
   ingress:
     - ports:
         - protocol: TCP
-          port: 80
+          port: 80                # DVWA (http)
         - protocol: TCP
-          port: 443
+          port: 443               # https (if used)
         - protocol: TCP
-          port: 8080
+          port: 8080              # vulnerable-api
         - protocol: TCP
-          port: 3000
+          port: 3000              # Juice Shop
 ---
+# --- DOC 4: allow-monitoring-scrape -----------------------------------------
+# Lets the blue-team pull metrics from victim pods. Narrowly scoped: only from
+# namespaces labelled role=blue-team, and only on the metrics ports 9090/8080.
+# This is a REAL, well-designed control — contrast with the permissive web rule.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-monitoring-scrape
   namespace: victim
 spec:
-  podSelector: {}
+  podSelector: {}                 # any victim pod may be scraped
   policyTypes:
     - Ingress
   ingress:
     - from:
         - namespaceSelector:
             matchLabels:
-              adversary-lab/role: "blue-team"
+              adversary-lab/role: "blue-team"   # source must be the monitoring namespace
       ports:
         - protocol: TCP
-          port: 9090
+          port: 9090              # Prometheus-style metrics
         - protocol: TCP
-          port: 8080
+          port: 8080              # app metrics/health
 ---
+# --- DOC 5: deny-attacker-ingress -------------------------------------------
+# Despite the name, this is an ALLOW rule (all NetworkPolicy rules are). It
+# permits ingress from every namespace whose role is NOT "red-team", i.e. it
+# withholds this allowance from the attacker namespace. NOTE / CAVEAT: because
+# policies are additive, this does NOT close the web ports — allow-web-ingress
+# (DOC 3) still lets attackers hit 80/443/8080/3000. This policy only governs
+# the NON-web paths, keeping attacker traffic off everything except the
+# deliberately exposed web apps.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -84,6 +125,6 @@ spec:
         - namespaceSelector:
             matchExpressions:
               - key: adversary-lab/role
-                operator: NotIn
+                operator: NotIn          # allow sources whose role is NOT in the list below
                 values:
-                  - "red-team"
+                  - "red-team"           # => attacker namespace is excluded (not allowed here)
