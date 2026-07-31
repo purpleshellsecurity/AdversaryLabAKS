@@ -3,17 +3,32 @@
 # MITRE ATT&CK: T1528 - Steal Application Access Token
 # ============================================================================
 
+# HOW THIS RULE WORKS
+# -------------------
+# Kubernetes auto-mounts a pod's ServiceAccount token at a fixed path inside the
+# container. Client libraries read it silently, but a shell/tool opening that file
+# directly is a strong sign someone is EXFILTRATING the token to reuse the
+# identity elsewhere (T1528 Steal Application Access Token). Falco watches file
+# opens for read on those exact paths. Priority is WARNING because in-app reads are
+# legitimate — triage on the process (%proc.cmdline) doing the reading.
+#
+# NOTE: condition/output are `>` block scalars — their indented lines are literal
+# rule text, so all commentary lives on full lines between the mapping keys.
+
 - rule: Read ServiceAccount Token in Container
   desc: Detects processes reading the mounted SA token inside a container (MITRE T1528)
+  # condition matches a file opened for reading (open_read) inside a container when
+  # the path is the mounted SA `token` or its `ca.crt` — the projected SA secret.
   condition: >
     open_read and
     container and
     (fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/token" or
      fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+  # output names the reader (%proc.cmdline), the file, and the container context.
   output: >
     SA token read inside container
     (user=%user.name command=%proc.cmdline file=%fd.name
      container=%container.name pod=%k8s.pod.name ns=%k8s.ns.name
      image=%container.image.repository:%container.image.tag)
-  priority: WARNING
-  tags: [mitre_credential_access, T1528]
+  priority: WARNING   # in-app SDK reads are normal — triage by the reading process
+  tags: [mitre_credential_access, T1528]   # ATT&CK tactic + technique labels

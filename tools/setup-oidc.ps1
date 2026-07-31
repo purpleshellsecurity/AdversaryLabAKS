@@ -1,8 +1,30 @@
 # =============================================================================
 # AKS Adversary Lab - OIDC Service Principal Setup
 # =============================================================================
-# Creates an App Registration with a Federated Credential for GitHub Actions
-# OIDC authentication. No client secrets — token-based only.
+# PURPOSE
+#   One-time bootstrap that lets GitHub Actions authenticate to Azure using
+#   OIDC (OpenID Connect) *workload identity federation* — i.e. with NO stored
+#   client secret. Instead of a password living in a GitHub secret (which can
+#   leak and never rotates itself), GitHub mints a short-lived OIDC token for
+#   each workflow run, and Azure AD (Entra ID) trades it for an Azure access
+#   token — but ONLY if the token's claims (repo, branch/environment) match a
+#   "federated credential" we register here.
+#
+# WHAT IT CREATES
+#   1. An App Registration (the identity) + its Service Principal.
+#   2. Federated credentials that pin exactly which GitHub contexts may sign in
+#      (push to the main branch, and the gated `lab` environment).
+#   3. Azure role assignments so that identity can actually deploy the lab.
+#   4. The three non-secret GitHub Actions variables the deploy workflow needs
+#      (client id, tenant id, subscription id) — set via `gh` if available.
+#
+# WHY OIDC INSTEAD OF A SECRET
+#   No long-lived credential to store, leak, or rotate. Access is bounded to
+#   the specific repo + branch/environment encoded in the federated credential's
+#   `Subject`, so even a copied client id is useless from anywhere else.
+#
+# IDEMPOTENT: safe to re-run. Every create step first checks for an existing
+#   object and reuses it rather than erroring.
 #
 # Usage:
 #   ./setup-oidc.ps1 -GitHubOrg "yourorg" -GitHubRepo "aks-adversary-lab"
@@ -11,33 +33,50 @@
 #   - Az PowerShell module (Install-Module Az)
 #   - Logged in: Connect-AzAccount
 #   - Sufficient permissions: Application Administrator + Owner on subscription
+#     (needed to create the app AND to grant it subscription-scope roles)
+#   - Optional: GitHub CLI `gh` (to push the variables automatically)
 # =============================================================================
 
+# CmdletBinding() turns this script into an "advanced function": it gains the
+# common parameters (-Verbose, -ErrorAction, etc.) and stricter param handling.
 [CmdletBinding()]
 param(
+    # -- Required: which GitHub repo is allowed to assume this identity. --
+    # These two values become part of the federated credential Subject, so only
+    # workflows in exactly this org/repo can exchange a token.
     [Parameter(Mandatory)]
     [string]$GitHubOrg,
 
     [Parameter(Mandatory)]
     [string]$GitHubRepo,
 
+    # Display name of the Azure AD App Registration to create/reuse.
     [Parameter()]
     [string]$AppName = "sp-aks-adversary-lab-github",
 
+    # Target subscription. Defaults to whatever `Connect-AzAccount` selected.
     [Parameter()]
     [string]$SubscriptionId = (Get-AzContext).Subscription.Id,
 
+    # Resource group the identity will deploy into. If it doesn't exist yet, the
+    # script grants Contributor at subscription scope so deploy time can create it.
     [Parameter()]
     [string]$ResourceGroupName = "rg-aks-adversary-lab",
 
+    # The repo's default branch. ValidateSet restricts input to the two common
+    # names so a typo can't silently produce a credential that never matches.
     [Parameter()]
     [ValidateSet("main", "master")]
     [string]$MainBranch = "main"
 )
 
+# Stop on the first error so a half-configured identity isn't left behind — any
+# failed Az cmdlet aborts the whole script rather than continuing blindly.
 $ErrorActionPreference = "Stop"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+# Tiny wrappers for consistent, color-coded console output. Purely cosmetic —
+# Write-Step announces a phase, Write-Success/Write-Info report within it.
 
 function Write-Step {
     param([string]$Message)
@@ -55,14 +94,19 @@ function Write-Info {
 }
 
 # ── Validate context ──────────────────────────────────────────────────────────
+# Confirm we're logged in and capture the tenant/subscription we'll federate to.
+# These come from the CURRENT Az session — run Connect-AzAccount first.
 
 Write-Step "Validating Azure context"
 
 $context = Get-AzContext
 if (-not $context) {
+    # No cached credential -> nothing downstream can succeed; fail early and clearly.
     throw "Not logged in. Run Connect-AzAccount first."
 }
 
+# Tenant + subscription IDs are handed to GitHub later as workflow variables; the
+# tenant is also the OIDC token issuer's audience side of the trust.
 $tenantId       = $context.Tenant.Id
 $subscriptionId = $context.Subscription.Id
 
@@ -71,9 +115,14 @@ Write-Info "Subscription: $subscriptionId"
 Write-Info "Account:      $($context.Account.Id)"
 
 # ── Create or get App Registration ───────────────────────────────────────────
+# The App Registration is the identity GitHub will impersonate. Its AppId becomes
+# AZURE_CLIENT_ID in the workflow. Look up by display name first so re-runs reuse
+# the same app (idempotent) instead of creating duplicates.
 
 Write-Step "Creating App Registration: $AppName"
 
+# -ErrorAction SilentlyContinue: "not found" shouldn't throw here — a null result
+# just means we need to create it.
 $existingApp = Get-AzADApplication -DisplayName $AppName -ErrorAction SilentlyContinue
 
 if ($existingApp) {
@@ -85,6 +134,9 @@ if ($existingApp) {
 }
 
 # ── Create or get Service Principal ──────────────────────────────────────────
+# The App Registration is the global definition; the Service Principal is its
+# concrete instance IN THIS TENANT, and it's the object that role assignments
+# actually attach to. No SP -> no way to grant it permissions.
 
 Write-Step "Creating Service Principal"
 
@@ -97,7 +149,9 @@ if ($existingSp) {
     $sp = New-AzADServicePrincipal -ApplicationId $app.AppId
     Write-Success "Created Service Principal: $($sp.Id)"
 
-    # Brief pause for AAD propagation
+    # Newly-created AAD objects take a few seconds to replicate across Azure AD.
+    # Pause so the immediately-following role assignments don't fail with
+    # "principal not found" against a not-yet-propagated SP.
     Write-Info "Waiting 15s for AAD propagation..."
     Start-Sleep -Seconds 15
 }
@@ -124,6 +178,8 @@ $federatedCredentials = @(
 )
 
 foreach ($cred in $federatedCredentials) {
+    # Idempotency: list existing federated creds on the app and match by name so a
+    # re-run doesn't try to add a duplicate (which would error).
     $existing = Get-AzADAppFederatedCredential `
         -ApplicationObjectId $app.Id `
         -ErrorAction SilentlyContinue |
@@ -132,6 +188,12 @@ foreach ($cred in $federatedCredentials) {
     if ($existing) {
         Write-Info "Federated credential already exists: $($cred.Name)"
     } else {
+        # The trust rule. Azure AD will exchange a GitHub token for an Azure token
+        # only when ALL of these line up:
+        #   Issuer   = GitHub's OIDC token issuer (who signed the incoming token)
+        #   Audience = api://AzureADTokenExchange (Azure AD's expected audience)
+        #   Subject  = the exact repo + branch/environment claim it must carry
+        # This is what scopes the identity to just this repo context.
         New-AzADAppFederatedCredential `
             -ApplicationObjectId $app.Id `
             -Audience "api://AzureADTokenExchange" `

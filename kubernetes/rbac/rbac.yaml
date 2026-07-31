@@ -1,5 +1,32 @@
+# ============================================================================
 # AKS Adversary Lab - RBAC Definitions
+# ----------------------------------------------------------------------------
+# PURPOSE: Defines the identities and permissions that drive the lab's attack
+#   and detection scenarios. It mixes THREE kinds of grants:
+#     - INTENTIONALLY OVER-PERMISSIVE roles for the attacker (so red-team tools
+#       have something to abuse and defenders have privilege-escalation to detect),
+#     - a cross-namespace read grant that models lateral movement, and
+#     - a legitimate least-privilege read role for the blue-team monitoring SA.
+# RBAC PRIMER: a Role/ClusterRole lists allowed (apiGroup, resource, verb)
+#   tuples; a RoleBinding/ClusterRoleBinding attaches it to a subject (here,
+#   ServiceAccounts). Role = namespaced; ClusterRole = cluster-wide.
+# Documents:
+#   1. red-team-operator SA               - the attacker identity
+#   2. red-team-full-access Role          - wildcard power in attacker ns (over-permissive)
+#   3. binding                            - attaches #2 to #1
+#   4. victim-reader Role                 - read pods/svcs in VICTIM ns (recon)
+#   5. attacker-victim-reader binding     - gives attacker SA cross-ns victim read
+#   6. monitoring-reader SA               - blue-team identity
+#   7. adversary-lab-monitoring ClusterRole - cluster-wide READ-ONLY (least priv)
+#   8. binding                            - attaches #7 to #6
+#   9. overprivileged-sa SA               - MISCONFIGURED victim identity
+#  10. overprivileged-sa-cluster-admin    - binds #9 to cluster-admin (worst case)
+# ============================================================================
 ---
+# --- DOC 1: red-team-operator ServiceAccount --------------------------------
+# The attacker's identity. Every red-team tool pod runs as this SA, so its token
+# (mounted at /var/run/secrets/...) is the credential attackers steal and reuse
+# (T1078 Valid Accounts).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -10,19 +37,26 @@ metadata:
   annotations:
     adversary-lab/mitre: "T1078"
 ---
+# --- DOC 2: red-team-full-access Role (OVER-PERMISSIVE BY DESIGN) -----------
+# Wildcard resources AND wildcard verbs across core/apps/batch, plus explicit
+# pods/exec, pods/log, pods/portforward. This is effectively namespace-admin
+# within `attacker`. Deliberately broad so the operator can freely spin up pods,
+# exec into them, and pivot — exactly the kind of grant a real audit would flag.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: red-team-full-access
   namespace: attacker
 rules:
-  - apiGroups: ["", "apps", "batch"]
-    resources: ["*"]
-    verbs: ["*"]
+  - apiGroups: ["", "apps", "batch"]              # core + workloads + jobs
+    resources: ["*"]                              # every resource type (wildcard)
+    verbs: ["*"]                                  # every verb incl. create/delete (wildcard)
   - apiGroups: [""]
-    resources: ["pods/exec", "pods/log", "pods/portforward"]
+    resources: ["pods/exec", "pods/log", "pods/portforward"]  # interactive pod access = code exec
     verbs: ["*"]
 ---
+# --- DOC 3: red-team-full-access-binding ------------------------------------
+# Binds the over-permissive Role above to the attacker SA within the attacker ns.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -37,6 +71,10 @@ roleRef:
   name: red-team-full-access
   apiGroup: rbac.authorization.k8s.io
 ---
+# --- DOC 4: victim-reader Role ----------------------------------------------
+# A READ-ONLY (get/list/watch) role scoped to the VICTIM namespace. Note it is
+# defined in `victim`, not `attacker` — it lets an outside subject enumerate the
+# targets. Models orchestration/service discovery (T1613).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -46,25 +84,32 @@ metadata:
     adversary-lab/mitre: "T1613"
 rules:
   - apiGroups: [""]
-    resources: ["pods", "services", "endpoints"]
-    verbs: ["get", "list", "watch"]
+    resources: ["pods", "services", "endpoints"]  # enough to map out the victim workloads
+    verbs: ["get", "list", "watch"]               # read-only
 ---
+# --- DOC 5: attacker-victim-reader binding (CROSS-NAMESPACE) -----------------
+# Binds the victim-ns read Role to the ATTACKER's SA. This grant is the crux of
+# the lateral-movement scenario: an identity in `attacker` legitimately reading
+# resources in `victim` (T1550.001 use of stolen/valid credentials across ns).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: attacker-victim-reader
-  namespace: victim
+  namespace: victim                               # binding lives in victim (where the Role is)
   annotations:
     adversary-lab/mitre: "T1550.001"
 subjects:
   - kind: ServiceAccount
     name: red-team-operator
-    namespace: attacker
+    namespace: attacker                           # subject is from the attacker namespace
 roleRef:
   kind: Role
   name: victim-reader
   apiGroup: rbac.authorization.k8s.io
 ---
+# --- DOC 6: monitoring-reader ServiceAccount --------------------------------
+# The blue-team identity used by detection/monitoring tooling to inventory the
+# cluster. Deliberately kept read-only (see the ClusterRole next).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -73,6 +118,11 @@ metadata:
   labels:
     adversary-lab/role: "blue-team"
 ---
+# --- DOC 7: adversary-lab-monitoring ClusterRole (LEAST-PRIVILEGE) ----------
+# A REAL, well-scoped control: cluster-wide but strictly get/list/watch (no
+# create/update/delete). It can observe workloads, RBAC, and events everywhere
+# for detection, but cannot change anything. This is the model of how monitoring
+# SHOULD be granted — contrast it with the cluster-admin binding below.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -80,7 +130,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods", "nodes", "services", "endpoints", "namespaces", "events"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch"]              # read-only across the core API
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
     verbs: ["get", "list", "watch"]
@@ -89,8 +139,10 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch"]              # read RBAC to audit permissions (still no writes)
 ---
+# --- DOC 8: adversary-lab-monitoring-binding --------------------------------
+# Attaches the least-privilege read ClusterRole to the blue-team SA cluster-wide.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -104,16 +156,25 @@ roleRef:
   name: adversary-lab-monitoring
   apiGroup: rbac.authorization.k8s.io
 ---
-# INTENTIONALLY MISCONFIGURED for T1098.006 escalation testing
+# --- DOC 9: overprivileged-sa ServiceAccount (INTENTIONALLY MISCONFIGURED) ---
+# A ServiceAccount living in the VICTIM namespace that is about to be bound to
+# cluster-admin (next doc). It represents the classic dangerous misconfiguration
+# an attacker hunts for: a low-value-namespace SA with god-mode. If a red-teamer
+# steals this token, it's game over for the whole cluster (T1098.006).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: overprivileged-sa
   namespace: victim
   annotations:
-    adversary-lab/mitre: "T1078, T1098.006"
+    adversary-lab/mitre: "T1078, T1098.006"        # Valid Accounts + Additional Cloud/Container Roles
     adversary-lab/warning: "INTENTIONALLY MISCONFIGURED"
 ---
+# --- DOC 10: overprivileged-sa-cluster-admin (WORST-CASE BINDING) -----------
+# Binds the victim-namespace SA above to the built-in `cluster-admin` ClusterRole
+# — full read/write over EVERY resource in the cluster. This is the deliberate
+# privilege-escalation target: detections should fire when this token is used, and
+# it is exactly the kind of binding a real security review must never approve.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -127,5 +188,5 @@ subjects:
     namespace: victim
 roleRef:
   kind: ClusterRole
-  name: cluster-admin
+  name: cluster-admin                              # built-in superuser role — total control
   apiGroup: rbac.authorization.k8s.io
