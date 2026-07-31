@@ -201,16 +201,30 @@ if (-not $SkipActivity) {
 Write-Step "Polling Log Analytics (timeout ${TimeoutMinutes}m; ingestion lag is typically 5-10 min)"
 
 function Test-TableHasData {
+    <#
+    .SYNOPSIS
+        Return how many matching rows a table has in the last 30 minutes.
+    .DESCRIPTION
+        Runs "<Table> | where TimeGenerated > ago(30m) [| where <Predicate>]
+        | summarize Count = count()" and returns the count. A missing predicate
+        means "any recent row". Distinguishes three outcomes via the return value:
+          >0  matching rows found
+           0  table queryable but empty (of matches) so far
+          -1  query threw — usually the table doesn't exist yet (no ingestion),
+              which we treat as "not ready, keep waiting" rather than a hard error.
+    #>
     param(
         [string]$WorkspaceId,
         [string]$Table,
         [string]$Predicate
     )
 
+    # Only add the marker filter clause when a predicate was supplied.
     $filter = ""
     if ($Predicate) {
         $filter = "| where $Predicate "
     }
+    # 30m window is comfortably wider than typical ingestion lag.
     $query = "$Table | where TimeGenerated > ago(30m) $filter| summarize Count = count()"
 
     try {
@@ -219,19 +233,26 @@ function Test-TableHasData {
         if ($null -eq $row) { return 0 }
         return [int]$row.Count
     } catch {
-        # Table may not exist until its first ingestion — treat as "not ready yet".
+        # A brand-new table doesn't exist until its first row is ingested, so the
+        # query errors. Signal "not ready yet" (-1) instead of failing the script.
         return -1
     }
 }
 
+# Poll until every table has reported data OR we hit the timeout. We track a
+# mutable "pending" worklist and remove tables as they pass.
 $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $pending  = [System.Collections.Generic.List[string]]::new()
 $Tables | ForEach-Object { $pending.Add($_) }
-$results  = @{}
+$results  = @{}   # table name -> matching row count, for the final report
 
 while ($pending.Count -gt 0 -and (Get-Date) -lt $deadline) {
+    # Iterate a COPY (@($pending)) so we can safely Remove from $pending mid-loop.
     foreach ($table in @($pending)) {
 
+        # Build this table's marker predicate — but only when we actually generated
+        # activity AND the table has a known searchable field. Otherwise leave it
+        # null so we accept any recent row (e.g. AKSControlPlane, or -SkipActivity).
         $predicate = $null
         if (-not $SkipActivity -and $MarkerPredicate.ContainsKey($table)) {
             $predicate = ($MarkerPredicate[$table] -f $marker)
@@ -240,22 +261,28 @@ while ($pending.Count -gt 0 -and (Get-Date) -lt $deadline) {
         $count = Test-TableHasData -WorkspaceId $customerId -Table $table -Predicate $predicate
 
         if ($count -gt 0) {
+            # Success — record it and drop the table from the worklist.
             Write-Success "$table — $count matching row(s) in last 30m"
             $results[$table] = $count
             [void]$pending.Remove($table)
         } elseif ($count -eq 0) {
+            # Table exists but our data hasn't landed yet — keep waiting.
             Write-Info "$table — no matching rows yet, waiting..."
         } else {
+            # -1: table not created yet (no ingestion at all so far) — keep waiting.
             Write-Info "$table — table not present yet (no ingestion so far), waiting..."
         }
     }
 
+    # Back off 30s between sweeps, but only if there's still work to do.
     if ($pending.Count -gt 0) {
         Start-Sleep -Seconds 30
     }
 }
 
 # ── Report ────────────────────────────────────────────────────────────────────
+# Summarize every expected table as PASS/FAIL. A table is PASS iff it made it
+# into $results (i.e. produced matching data before the deadline).
 
 Write-Step "Result"
 
@@ -264,12 +291,15 @@ foreach ($table in $Tables) {
     if ($results.ContainsKey($table)) {
         Write-Success "PASS  $table  ($($results[$table]) row(s))"
     } else {
+        # Never got data in the timeout window — count it as a failure.
         Write-Fail "FAIL  $table  (no data within ${TimeoutMinutes}m)"
         $failed++
     }
 }
 
 Write-Host ""
+# Exit code is the contract for callers/CI: 0 = pipeline healthy, 1 = something
+# missing. The guidance text below points at the usual culprits.
 if ($failed -eq 0) {
     Write-Host "  All $($Tables.Count) tables receiving data — logging pipeline verified." -ForegroundColor Green
     Write-Host "  Safe to run attack simulations, or tear the lab down." -ForegroundColor Gray
