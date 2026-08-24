@@ -24,6 +24,22 @@ param location string
 param namePrefix string
 // Kubernetes version to pin. Explicit pinning keeps the lab reproducible.
 param kubernetesVersion string = '1.34.2'
+
+// Control-plane pricing tier. Defaults to Free, which costs NOTHING for cluster
+// management, supports up to 1,000 nodes, and includes every current AKS
+// feature. Standard adds only a financially-backed API-server uptime SLA, for
+// roughly $73/month.
+//
+// Microsoft's own guidance puts this lab squarely in Free: it recommends Free
+// for "development and test environments, learning, evaluation, and
+// non-production workloads" and "clusters with fewer than 10 nodes". This
+// cluster runs three. A lab that is stopped between sessions has no use for an
+// uptime SLA, and paying for one is ~$876/year of nothing.
+//
+// Set to 'Standard' only if you deliberately want the SLA.
+@description('AKS control-plane tier. Free = no cluster-management charge.')
+@allowed([ 'Free', 'Standard' ])
+param clusterTier string = 'Free'
 param systemNodeVmSize string = 'Standard_D2s_v3'   // → 'Standard_D2s_v3' is fine for system
 param userNodeVmSize string = 'Standard_D4s_v3'     // → change to 'Standard_D4s_v3'
 // Subnet IDs from aks_networking.bicep — node pools are injected into these.
@@ -57,9 +73,9 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2025-03-01' = {
   name: clusterName
   location: location
   tags: tags
-  // Base SKU with Standard tier: Standard tier gives the SLA-backed, financially
-  // guaranteed API server uptime (vs. Free) — reasonable for a persistent lab.
-  sku: { name: 'Base', tier: 'Standard' }
+  // Base SKU; tier is a parameter defaulting to Free — see clusterTier above for
+  // why a three-node teaching lab should not be paying for an uptime SLA.
+  sku: { name: 'Base', tier: clusterTier }
   // System-assigned managed identity for the cluster control plane — no stored
   // credentials; Azure manages the identity lifecycle. This principal is what
   // grants the cluster access to VNet, LBs, etc.

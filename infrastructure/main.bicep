@@ -68,6 +68,12 @@ param existingWorkspaceResourceId string = ''
 @description('Kubernetes version')
 param kubernetesVersion string = '1.34.2'
 
+// Control-plane tier. Free by default — a three-node lab does not need the
+// SLA that Standard charges ~$73/month for. See modules/aks_cluster.bicep.
+@description('AKS control-plane tier. Free = no cluster-management charge.')
+@allowed([ 'Free', 'Standard' ])
+param clusterTier string = 'Free'
+
 @description('AKS system node pool VM size')
 param systemNodeVmSize string = 'Standard_D2s_v3'
 
@@ -192,6 +198,7 @@ module aksCluster 'modules/aks_cluster.bicep' = {
     location: location
     namePrefix: namePrefix
     kubernetesVersion: kubernetesVersion
+    clusterTier: clusterTier
     systemNodeVmSize: systemNodeVmSize
     userNodeVmSize: userNodeVmSize
     systemSubnetId: networking.outputs.systemSubnetId

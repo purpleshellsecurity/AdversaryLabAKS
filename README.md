@@ -335,12 +335,20 @@ Approximate monthly cost running 24/7:
 
 | Resource | Cost |
 |---|---|
-| AKS Standard tier (control plane) | ~$73 |
+| AKS control plane (**Free** tier — default) | $0 |
 | 1× D2s_v3 system node | ~$70 |
 | 1× D2s_v3 user node | ~$70 |
 | Log Analytics (~5 GB/day, 90-day retention) | ~$35 |
 | ACR Standard | ~$5 |
-| **Total** | **~$253/month** |
+| **Total** | **~$180/month** |
+
+The control plane defaults to the **Free** tier: no cluster-management charge, up
+to 1,000 nodes, every current AKS feature. Standard costs ~$73/month and adds only
+a financially-backed API-server uptime SLA — which a lab that is stopped between
+sessions has no use for. Deploy with `clusterTier=Standard` if you want it.
+
+> Switching tier on an existing cluster requires it to be **Running**:
+> `az aks update -g <rg> -n <cluster> --tier free`
 
 For engagements or training sessions, deploy for the session and destroy when done — cost is negligible at a few hours.
 
