@@ -291,8 +291,11 @@ def verify() -> int:
     _, source_rules = load_source_rules()
     deployed_rules = extract_deployed_rules(VALUES_FILE.read_text(encoding="utf-8"))
 
-    source_by_name = {r.get("rule"): r for r in source_rules}
-    deployed_by_name = {r.get("rule"): r for r in deployed_rules}
+    # Only entries with a `rule:` key are detections. `list:`/`macro:` entries
+    # are reusable condition fragments — they travel with the rules and are
+    # compared implicitly through the conditions that reference them.
+    source_by_name = {r["rule"]: r for r in source_rules if "rule" in r}
+    deployed_by_name = {r["rule"]: r for r in deployed_rules if "rule" in r}
 
     problems: list[str] = []
 
