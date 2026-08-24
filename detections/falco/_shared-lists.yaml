@@ -1,0 +1,79 @@
+# ============================================================================
+# Falco shared lists — reusable condition fragments, not detections
+# ============================================================================
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Three of the lab's rules need to exclude the same thing: AKS platform agents
+# doing, legitimately and constantly, the exact activity the rule watches for.
+# Keeping one list here instead of repeating it per rule means tuning happens in
+# one place — when AKS ships a new agent, it is added once.
+#
+# ORDERING MATTERS. Falco resolves a list at the point a condition references
+# it, so the list must be *defined before* any rule that uses it. This file is
+# named with a leading underscore and tools/build-falco-rules.py emits
+# underscore-prefixed files first for exactly that reason.
+#
+# THE MEASUREMENT BEHIND THIS LIST
+# --------------------------------
+# On an idle 3-node AKS 1.34 cluster, before any tuning:
+#   Read ServiceAccount Token in Container  ~174,000 alerts/day
+#   Shell Spawned in Container               ~33,000 alerts/day
+#   Pod Contacted Cloud Instance Metadata     ~3,800 alerts/day
+# In every case the overwhelming majority came from platform agents, and the one
+# real attack was a single event lost in the flood. A rule nobody can read is not
+# a detection.
+#
+# WHY IMAGES AND NOT NAMESPACES
+#   Excluding `kube-system` wholesale would be simpler and need no maintenance,
+#   but it blinds these rules in exactly the namespace an attacker most wants to
+#   reach — escaping into kube-system is a scenario this lab exists to teach.
+#   Matching on the agent IMAGE keeps kube-system watched: an unexpected process
+#   in an unexpected image still fires, even there.
+#
+# THE COST, STATED PLAINLY
+#   This list is AKS-version-specific. A new platform agent shows up as new
+#   noise and has to be added. That already happened once during tuning
+#   (`addon-token-adapter` surfaced only after the first pass). The alternative —
+#   a wildcard like `startswith "mcr.microsoft.com/"` — would never need
+#   updating and would also let an attacker evade every one of these rules by
+#   running any Microsoft-published image.
+# ============================================================================
+
+- list: aks_platform_agent_images
+  items: [
+    # Azure Policy / Gatekeeper admission control
+    "mcr.microsoft.com/azure-policy/v2/policy-kubernetes-addon-prod",
+    "mcr.microsoft.com/oss/v2/open-policy-agent/gatekeeper",
+    # Container Insights / Azure Monitor telemetry agents.
+    # These two dominate every rule's noise: the prometheus-collector alone
+    # accounted for 260 of 345 shell spawns and 34 of 40 IMDS calls in 15 min.
+    "mcr.microsoft.com/azuremonitor/containerinsights/ciprod",
+    "mcr.microsoft.com/azuremonitor/containerinsights/ciprod/prometheus-collector/images",
+    # Defender for Containers sensors
+    "mcr.microsoft.com/azuredefender/stable/low-level-collector",
+    "mcr.microsoft.com/azuredefender/stable/pod-collector",
+    # Cilium / Retina dataplane and network observability
+    "mcr.microsoft.com/containernetworking/cilium/cilium-distroless",
+    "mcr.microsoft.com/containernetworking/cilium/operator-generic",
+    "mcr.microsoft.com/containernetworking/retina-operator-enterprise",
+    "mcr.microsoft.com/containernetworking/azure-iptables-monitor",
+    "mcr.microsoft.com/containernetworking/azure-cns",
+    # Core Kubernetes system components. azure-cloud-node-manager legitimately
+    # queries IMDS for node metadata — 6 of 40 IMDS calls in 15 min.
+    "mcr.microsoft.com/oss/v2/kubernetes/metrics-server",
+    "mcr.microsoft.com/oss/v2/kubernetes/azure-cloud-node-manager",
+    "mcr.microsoft.com/oss/v2/kubernetes/kube-state-metrics",
+    "mcr.microsoft.com/oss/v2/kubernetes/coredns",
+    "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/cluster-proportional-autoscaler",
+    "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/addon-resizer",
+    # CSI drivers and image cleaner
+    "mcr.microsoft.com/oss/v2/kubernetes-csi/azuredisk-csi",
+    "mcr.microsoft.com/oss/v2/kubernetes-csi/secrets-store/driver",
+    "mcr.microsoft.com/oss/v2/eraser/eraser-manager",
+    # AKS managed-identity token adapter (low frequency — surfaced only after
+    # the first tuning pass, which is the maintenance cost noted above)
+    "mcr.microsoft.com/aks/msi/addon-token-adapter",
+    # Falco's own Kubernetes metadata collector
+    "docker.io/falcosecurity/k8s-metacollector"
+  ]

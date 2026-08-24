@@ -15,63 +15,11 @@
 # NOTE: condition/output are `>` block scalars — their indented lines are literal
 # rule text, so all commentary lives on full lines between the mapping keys.
 
-# ── TUNING (measured, not guessed) ──────────────────────────────────────────
-# Untuned, this rule was measured on a live AKS cluster at 634 alerts in 5
-# minutes — roughly 180,000/day — of which exactly ONE was a real attack. Every
-# other hit was an AKS platform agent legitimately reading its own token:
-# the Azure Policy addon (310), the Container Insights collectors (437),
-# metrics-server, Cilium, Retina, Gatekeeper, Defender, CSI drivers, CoreDNS.
-#
-# A rule at 1:633 signal-to-noise is not a detection — the real hit is invisible
-# in the flood, and an analyst learns to ignore the rule entirely.
-#
-# WHY AN IMAGE ALLOWLIST AND NOT A NAMESPACE EXCLUSION
-#   Dropping kube-system wholesale would be simpler and need no maintenance, but
-#   it blinds the rule in exactly the namespace an attacker most wants to reach:
-#   a container escape into kube-system is a scenario this lab exists to teach.
-#   Allowlisting the specific agent IMAGES keeps kube-system watched, so an
-#   unexpected process reading a token there still alerts.
-#
-# THE TRADE-OFF, STATED PLAINLY
-#   This list is AKS-version-specific. When AKS ships a new platform agent, its
-#   token reads will appear as new noise and the list needs extending. That
-#   maintenance is deliberate and visible, which is the point — a wildcard like
-#   `startswith "mcr.microsoft.com/"` would never need updating and would also
-#   let an attacker evade the rule by running any Microsoft-published image.
-- list: aks_platform_agent_images
-  items: [
-    # Azure Policy / Gatekeeper admission control
-    "mcr.microsoft.com/azure-policy/v2/policy-kubernetes-addon-prod",
-    "mcr.microsoft.com/oss/v2/open-policy-agent/gatekeeper",
-    # Container Insights / Azure Monitor telemetry agents
-    "mcr.microsoft.com/azuremonitor/containerinsights/ciprod",
-    "mcr.microsoft.com/azuremonitor/containerinsights/ciprod/prometheus-collector/images",
-    # Defender for Containers sensors
-    "mcr.microsoft.com/azuredefender/stable/low-level-collector",
-    "mcr.microsoft.com/azuredefender/stable/pod-collector",
-    # Cilium / Retina dataplane and network observability
-    "mcr.microsoft.com/containernetworking/cilium/cilium-distroless",
-    "mcr.microsoft.com/containernetworking/cilium/operator-generic",
-    "mcr.microsoft.com/containernetworking/retina-operator-enterprise",
-    "mcr.microsoft.com/containernetworking/azure-iptables-monitor",
-    "mcr.microsoft.com/containernetworking/azure-cns",
-    # Core Kubernetes system components
-    "mcr.microsoft.com/oss/v2/kubernetes/metrics-server",
-    "mcr.microsoft.com/oss/v2/kubernetes/azure-cloud-node-manager",
-    "mcr.microsoft.com/oss/v2/kubernetes/kube-state-metrics",
-    "mcr.microsoft.com/oss/v2/kubernetes/coredns",
-    "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/cluster-proportional-autoscaler",
-    "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/addon-resizer",
-    # CSI drivers and image cleaner
-    "mcr.microsoft.com/oss/v2/kubernetes-csi/azuredisk-csi",
-    "mcr.microsoft.com/oss/v2/kubernetes-csi/secrets-store/driver",
-    "mcr.microsoft.com/oss/v2/eraser/eraser-manager",
-    # AKS managed-identity token adapter (low frequency — surfaced only after
-    # the first tuning pass, which is the maintenance cost noted above)
-    "mcr.microsoft.com/aks/msi/addon-token-adapter",
-    # Falco's own Kubernetes metadata collector
-    "docker.io/falcosecurity/k8s-metacollector"
-  ]
+# TUNING: measured at ~174,000 alerts/day on an idle AKS cluster, of which
+# exactly ONE was a real attack. The exclusion below suppresses the AKS platform
+# agents responsible; see detections/falco/_shared-lists.yaml for the full
+# measurement, the images, and why this allowlists IMAGES rather than excluding
+# the kube-system namespace.
 
 - rule: Read ServiceAccount Token in Container
   desc: Detects processes reading the mounted SA token inside a container (MITRE T1528)

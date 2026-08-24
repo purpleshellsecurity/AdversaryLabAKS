@@ -138,7 +138,18 @@ def load_source_rules() -> tuple[str, list[dict]]:
     chunks: list[str] = []
     rules: list[dict] = []
 
-    for path in sorted(FALCO_SOURCE_DIR.glob("*.yaml")):
+    # ORDER IS SEMANTIC, NOT COSMETIC. Falco resolves a `list:`/`macro:` at the
+    # point a condition references it, so shared fragments must appear BEFORE the
+    # rules that use them or the ruleset fails to load. Underscore-prefixed files
+    # hold those fragments and are emitted first.
+    #
+    # This is done explicitly rather than relying on sorted() — "_" happens to
+    # sort before lowercase letters in ASCII, which would make correctness an
+    # accident of filenames that a rename could silently break.
+    paths = sorted(FALCO_SOURCE_DIR.glob("*.yaml"))
+    paths.sort(key=lambda p: not p.name.startswith("_"))
+
+    for path in paths:
         raw = path.read_text(encoding="utf-8")
 
         # Parse first: a source file that isn't a list of rule mappings would

@@ -74,10 +74,10 @@ data. Only a fired attack proves a detection.
 
 | Tactic | Technique | Detection | Priority | Trigger script | Maturity |
 |--------|-----------|-----------|----------|----------------|:--------:|
-| Execution | **T1059** Command & Scripting Interpreter | `falco/shell-in-container.yaml` | WARNING | `attack-simulations/shell-in-container.sh` | 🟩 Sound |
+| Execution | **T1059** Command & Scripting Interpreter | `falco/shell-in-container.yaml` | WARNING | `attack-simulations/shell-in-container.sh` | 🟩 Sound (**tuned**) |
 | Execution | **T1059** Command & Scripting Interpreter | `falco/reverse-shell.yaml` | CRITICAL | `attack-simulations/reverse-shell.sh` | 🟩 Sound |
 | Credential Access | **T1528** Steal Application Access Token | `falco/token-theft.yaml` | WARNING | `attack-simulations/token-theft.sh` | 🟩 Sound (**tuned** — see below) |
-| Credential Access | **T1552.005** Cloud Instance Metadata API | `falco/imds-access.yaml` | CRITICAL | `attack-simulations/imds-access.sh` | 🟩 Sound |
+| Credential Access | **T1552.005** Cloud Instance Metadata API | `falco/imds-access.yaml` | CRITICAL | `attack-simulations/imds-access.sh` | 🟩 Sound (**tuned**) |
 | Privilege Escalation | **T1611** Escape to Host | `falco/container-escape.yaml` | CRITICAL | `attack-simulations/container-escape.sh` | 🟩 Sound |
 | Impact | **T1496.001** Compute Hijacking | `falco/crypto-mining.yaml` | CRITICAL | `attack-simulations/crypto-mining.sh` | 🟩 Sound |
 
@@ -88,11 +88,17 @@ Structural validation and fixture tests prove a rule *matches*. Only production
 traffic shows what **else** it matches. Measured at steady state (not startup
 churn — the rate was flat across 25 minutes) on a 3-node AKS 1.34 cluster:
 
-| Rule | Before tuning | After tuning | Note |
+| Rule | Before tuning | After tuning | Dominant noise source |
 |---|---:|---:|---|
-| `token-theft.yaml` | ~174,000/day | **~144/day** | Tuned via `aks_platform_agent_images` allowlist |
-| `shell-in-container.yaml` | ~10,700/day | *untuned* | 73 of 74 samples from `kube-system` |
-| `imds-access.yaml` | ~1,300/day | *untuned* | All samples `kube-system` — AKS agents legitimately query IMDS for managed identity |
+| `token-theft.yaml` | ~174,000/day | **0 noise** | Azure Policy addon, Container Insights collectors |
+| `shell-in-container.yaml` | ~33,000/day | **0 noise** | prometheus-collector (260/345), ama-logs (84/345) |
+| `imds-access.yaml` | ~3,800/day | **0 noise** | prometheus-collector MetricsExtension, cloud-node-manager |
+
+All three now share one allowlist — `aks_platform_agent_images` in
+[`_shared-lists.yaml`](../detections/falco/_shared-lists.yaml) — so a new AKS
+agent is added in one place. Verified after tuning by re-running each technique:
+every true positive still fires, with zero accompanying noise in a 4-minute
+window.
 
 **Token theft, before tuning: 634 alerts in 5 minutes, of which exactly ONE was
 the real attack.** A rule at 1:633 signal-to-noise is not a detection — the true
@@ -109,8 +115,10 @@ extending when AKS ships a new agent. That already happened once during tuning
 
 Verified after tuning: the attack still fires, with zero accompanying noise.
 
-> `shell-in-container` and `imds-access` need the same treatment and have not had
-> it. Their rates above are measured, not estimated.
+> **Still untuned:** the upstream Falco rule *Drop and execute new binary in
+> container* fires ~2,500/day, 16 of 17 samples from `kube-system`. It ships in
+> Falco's default ruleset rather than this repo, so tuning it means an override
+> in `falco_rules.local.yaml` rather than editing `detections/falco/`.
 
 ---
 

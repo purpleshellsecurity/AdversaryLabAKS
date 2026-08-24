@@ -63,6 +63,32 @@ falco:
   #   * "Pod Contacted Cloud Instance Metadata..."   -> T1552.005 (IMDS credential theft)
   customRules:
     adversary-lab-rules.yaml: |-
+      - list: aks_platform_agent_images
+        items: [
+          "mcr.microsoft.com/azure-policy/v2/policy-kubernetes-addon-prod",
+          "mcr.microsoft.com/oss/v2/open-policy-agent/gatekeeper",
+          "mcr.microsoft.com/azuremonitor/containerinsights/ciprod",
+          "mcr.microsoft.com/azuremonitor/containerinsights/ciprod/prometheus-collector/images",
+          "mcr.microsoft.com/azuredefender/stable/low-level-collector",
+          "mcr.microsoft.com/azuredefender/stable/pod-collector",
+          "mcr.microsoft.com/containernetworking/cilium/cilium-distroless",
+          "mcr.microsoft.com/containernetworking/cilium/operator-generic",
+          "mcr.microsoft.com/containernetworking/retina-operator-enterprise",
+          "mcr.microsoft.com/containernetworking/azure-iptables-monitor",
+          "mcr.microsoft.com/containernetworking/azure-cns",
+          "mcr.microsoft.com/oss/v2/kubernetes/metrics-server",
+          "mcr.microsoft.com/oss/v2/kubernetes/azure-cloud-node-manager",
+          "mcr.microsoft.com/oss/v2/kubernetes/kube-state-metrics",
+          "mcr.microsoft.com/oss/v2/kubernetes/coredns",
+          "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/cluster-proportional-autoscaler",
+          "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/addon-resizer",
+          "mcr.microsoft.com/oss/v2/kubernetes-csi/azuredisk-csi",
+          "mcr.microsoft.com/oss/v2/kubernetes-csi/secrets-store/driver",
+          "mcr.microsoft.com/oss/v2/eraser/eraser-manager",
+          "mcr.microsoft.com/aks/msi/addon-token-adapter",
+          "docker.io/falcosecurity/k8s-metacollector"
+        ]
+
       - rule: Container Escape via nsenter
         desc: Detects nsenter execution which may indicate container escape (MITRE T1611)
         condition: >
@@ -99,7 +125,8 @@ falco:
         condition: >
           outbound and
           container and
-          fd.sip = "169.254.169.254"
+          fd.sip = "169.254.169.254" and
+          not container.image.repository in (aks_platform_agent_images)
         output: >
           Container reached cloud metadata endpoint
           (user=%user.name proc=%proc.name cmdline=%proc.cmdline
@@ -129,7 +156,8 @@ falco:
         condition: >
           spawned_process and
           container and
-          proc.name in (shell_binaries)
+          proc.name in (shell_binaries) and
+          not container.image.repository in (aks_platform_agent_images)
         output: >
           Shell spawned in container
           (user=%user.name proc=%proc.name parent=%proc.pname cmdline=%proc.cmdline
@@ -137,32 +165,6 @@ falco:
            image=%container.image.repository:%container.image.tag)
         priority: WARNING   # not CRITICAL: legitimate `kubectl exec` also spawns shells
         tags: [mitre_execution, T1059]   # ATT&CK tactic + technique labels
-
-      - list: aks_platform_agent_images
-        items: [
-          "mcr.microsoft.com/azure-policy/v2/policy-kubernetes-addon-prod",
-          "mcr.microsoft.com/oss/v2/open-policy-agent/gatekeeper",
-          "mcr.microsoft.com/azuremonitor/containerinsights/ciprod",
-          "mcr.microsoft.com/azuremonitor/containerinsights/ciprod/prometheus-collector/images",
-          "mcr.microsoft.com/azuredefender/stable/low-level-collector",
-          "mcr.microsoft.com/azuredefender/stable/pod-collector",
-          "mcr.microsoft.com/containernetworking/cilium/cilium-distroless",
-          "mcr.microsoft.com/containernetworking/cilium/operator-generic",
-          "mcr.microsoft.com/containernetworking/retina-operator-enterprise",
-          "mcr.microsoft.com/containernetworking/azure-iptables-monitor",
-          "mcr.microsoft.com/containernetworking/azure-cns",
-          "mcr.microsoft.com/oss/v2/kubernetes/metrics-server",
-          "mcr.microsoft.com/oss/v2/kubernetes/azure-cloud-node-manager",
-          "mcr.microsoft.com/oss/v2/kubernetes/kube-state-metrics",
-          "mcr.microsoft.com/oss/v2/kubernetes/coredns",
-          "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/cluster-proportional-autoscaler",
-          "mcr.microsoft.com/oss/v2/kubernetes/autoscaler/addon-resizer",
-          "mcr.microsoft.com/oss/v2/kubernetes-csi/azuredisk-csi",
-          "mcr.microsoft.com/oss/v2/kubernetes-csi/secrets-store/driver",
-          "mcr.microsoft.com/oss/v2/eraser/eraser-manager",
-          "mcr.microsoft.com/aks/msi/addon-token-adapter",
-          "docker.io/falcosecurity/k8s-metacollector"
-        ]
 
       - rule: Read ServiceAccount Token in Container
         desc: Detects processes reading the mounted SA token inside a container (MITRE T1528)

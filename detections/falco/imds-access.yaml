@@ -20,10 +20,19 @@
   # condition matches an outbound network connection FROM inside a container whose
   # server IP (fd.sip) is the IMDS link-local address. Those three ANDed = a pod
   # reaching cloud metadata.
+  # TUNING: measured at ~3,800 alerts/day untuned, ALL from kube-system. AKS
+  # agents query IMDS legitimately to obtain managed-identity tokens — the
+  # prometheus-collector's MetricsExtension (34 of 40 in 15 min) and
+  # azure-cloud-node-manager (6 of 40). See _shared-lists.yaml.
+  #
+  # Note this rule keeps CRITICAL priority: unlike a shell, a pod reaching IMDS
+  # has essentially no benign explanation OUTSIDE those agents, so once they are
+  # excluded any remaining hit deserves immediate attention.
   condition: >
     outbound and
     container and
-    fd.sip = "169.254.169.254"
+    fd.sip = "169.254.169.254" and
+    not container.image.repository in (aks_platform_agent_images)
   # output records who/what made the call and the connection + container context.
   output: >
     Container reached cloud metadata endpoint
