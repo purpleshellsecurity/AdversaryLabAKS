@@ -1,0 +1,83 @@
+# =============================================================================
+# pre-commit hooks — catch it before it reaches CI
+# =============================================================================
+# Install once:
+#     pip install pre-commit && make hooks
+# Run against everything (not just staged files):
+#     pre-commit run --all-files
+# Skip in an emergency:
+#     git commit --no-verify
+#
+# WHAT BELONGS HERE
+#   Only checks that are FAST and need no Docker, no cloud, and no cluster. A
+#   hook that takes 30 seconds gets bypassed with --no-verify within a week,
+#   which is worse than not having it. The Kusto emulator tests (`make test`)
+#   and the container scans deliberately stay in CI.
+#
+# THE GENERATED-FILE HOOKS ARE THE IMPORTANT ONES
+#   helm/falco/values.yaml and infrastructure/main.json are both DERIVED. Only
+#   the derived copy is ever deployed, so editing a source file and forgetting
+#   to regenerate leaves the cluster running the old logic while git history
+#   claims otherwise. These hooks make that impossible to commit.
+# =============================================================================
+
+repos:
+  # ── Generic hygiene ────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        # .kql and .md keep meaningful trailing layout; leave them alone.
+        exclude: '\.(kql|md)$'
+      - id: end-of-file-fixer
+        exclude: '\.(kql|md)$'
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=512']
+        # infrastructure/main.json is a legitimately large generated artifact.
+        exclude: '^infrastructure/main\.json$'
+      - id: check-json
+      - id: check-yaml
+        # Helm templates and multi-doc manifests confuse the strict parser.
+        exclude: '^(helm/.*/templates/|kubernetes/)'
+      - id: detect-private-key
+
+  # ── Repo-specific checks, run through the Makefile ─────────────────────────
+  # These call the SAME targets CI calls, so a hook passing and CI failing means
+  # the Makefile is wrong — not that the two drifted apart.
+  - repo: local
+    hooks:
+      - id: detection-validate
+        name: detection rules are structurally valid
+        entry: make validate
+        language: system
+        pass_filenames: false
+        files: '^detections/'
+
+      - id: detection-wiring
+        name: every detection is wired to a deployment
+        entry: make wiring
+        language: system
+        pass_filenames: false
+        files: '^(detections/|infrastructure/modules/aks_detections\.bicep)'
+
+      - id: falco-parity
+        name: helm values match detections/falco (regenerate if this fails)
+        entry: make falco-parity
+        language: system
+        pass_filenames: false
+        files: '^(detections/falco/|helm/falco/values\.yaml)'
+
+      - id: arm-parity
+        name: main.json matches main.bicep (regenerate if this fails)
+        entry: make arm-parity
+        language: system
+        pass_filenames: false
+        files: '^(infrastructure/|detections/kql/.*\.(kql|metadata\.json))$'
+
+      - id: k8s-schema
+        name: kubernetes manifests match the API schema
+        entry: make k8s
+        language: system
+        pass_filenames: false
+        files: '^kubernetes/.*\.ya?ml$'

@@ -88,6 +88,33 @@ aks-adversary-lab/
 
 ---
 
+## Local Development
+
+Every check CI runs, runnable locally in seconds — no cluster, no cloud, no Docker:
+
+```bash
+make            # list all targets
+make check      # every offline check (~2s)
+make test       # adds the Kusto emulator (needs Docker)
+make hooks      # install pre-commit hooks
+```
+
+CI calls the same `make` targets, so the two cannot drift. The one difference is
+`STRICT=1`: locally a missing tool **skips** its check and says so loudly at the
+end; in CI a skip is a failure, because CI installs everything.
+
+Two targets regenerate derived files — run them after editing the source:
+
+| If you edit | Run |
+|---|---|
+| `detections/falco/*.yaml` | `make falco-build` |
+| `infrastructure/*.bicep` | `make arm-build` |
+
+The pre-commit hooks catch both automatically. Skipping one silently would leave
+the cluster running old logic while git history claimed otherwise.
+
+---
+
 ## CI/CD Pipeline
 
 Every pull request and push to `main` runs `validate.yaml` automatically. The deploy workflow is always manual — nothing deploys to Azure without you clicking a button.

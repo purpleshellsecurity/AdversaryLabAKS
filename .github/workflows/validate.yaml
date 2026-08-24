@@ -111,7 +111,7 @@ jobs:
           echo "on PATH    : $(bicep --version 2>/dev/null || echo none)"
 
       - name: Assert main.json matches main.bicep
-        run: python tools/check-arm-parity.py
+        run: make arm-parity STRICT=1 PYTHON=python
 
   # Lints all PowerShell with PSScriptAnalyzer at Warning+Error severity, failing
   # the job on any finding. The $excludeRules list below is the set of rules we
@@ -201,14 +201,7 @@ jobs:
 
       - name: Validate Kubernetes manifests
         run: |
-          find kubernetes/ -name "*.yaml" -o -name "*.yml" | while read f; do
-            echo "Validating $f..."
-            kubeconform \
-              -strict \
-              -ignore-missing-schemas \
-              -kubernetes-version 1.34.0 \
-              "$f"
-          done
+          make k8s STRICT=1
 
   # Two distinct checks on the Falco deployment path:
   #   1. PARITY  — helm/falco/values.yaml is GENERATED from detections/falco/*.yaml.
@@ -239,7 +232,7 @@ jobs:
       # Compares every source rule against the deployed copy field-by-field and
       # names exactly which rule and which field drifted.
       - name: Assert Falco rules match their source
-        run: python tools/build-falco-rules.py --check
+        run: make falco-parity PYTHON=python
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -279,16 +272,14 @@ jobs:
 
       - name: Validate detection rules
         run: |
-          python tools/detection-validator/validate.py \
-            --detections-dir detections \
-            --verbose
+          make validate PYTHON=python
 
       # Structure is not enough: a rule can be perfectly authored and still never
       # deploy. This asserts every detection has a metadata sidecar, is referenced
       # by infrastructure/modules/aks_detections.bicep, and maps entities to
       # columns its query actually projects.
       - name: Check detection deployment wiring
-        run: python tools/check-detection-wiring.py
+        run: make wiring PYTHON=python
 
   # ── Tier 1: detection LOGIC test (offline, no cloud) ─────────────────────
   # Runs each real .kql against recorded event fixtures inside the Kusto emulator
