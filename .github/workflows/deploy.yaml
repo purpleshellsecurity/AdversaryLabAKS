@@ -222,12 +222,25 @@ jobs:
       - name: Install Bicep
         run: az bicep install
 
+      # Versions are PINNED, and not only for reproducibility. With the default
+      # `latest`, `az aks install-cli` calls the GitHub API unauthenticated to
+      # resolve kubelogin's newest release — and Actions runners share IP pools
+      # that routinely exhaust the anonymous rate limit:
+      #     urllib.error.HTTPError: HTTP Error 403: rate limit exceeded
+      # That took down a deploy here. Passing an explicit version skips the
+      # lookup and downloads directly, so the deploy no longer depends on
+      # anonymous GitHub API quota. Bump these deliberately.
       - name: Install kubectl + kubelogin
+        env:
+          KUBECTL_VERSION: v1.34.0      # matches the kubeconform target in validate.yaml
+          KUBELOGIN_VERSION: v0.2.19
         run: |
-          az aks install-cli
+          az aks install-cli \
+            --client-version "$KUBECTL_VERSION" \
+            --kubelogin-version "$KUBELOGIN_VERSION"
           kubectl version --client
           kubelogin --version
-          echo "✓ kubectl and kubelogin installed"
+          echo "✓ kubectl $KUBECTL_VERSION and kubelogin $KUBELOGIN_VERSION installed"
 
       - name: Workspace mode
         run: |
