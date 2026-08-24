@@ -26,11 +26,14 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # GENERATED files are excluded from both fixers. `bicep build` emits
+      # main.json without a trailing newline; a fixer that adds one would be
+      # undone by the next `make arm-build` and re-applied by the next commit,
+      # churning the file forever. .kql and .md keep meaningful trailing layout.
       - id: trailing-whitespace
-        # .kql and .md keep meaningful trailing layout; leave them alone.
-        exclude: '\.(kql|md)$'
+        exclude: &generated '\.(kql|md)$|^infrastructure/main\.json$|^helm/falco/values\.yaml$'
       - id: end-of-file-fixer
-        exclude: '\.(kql|md)$'
+        exclude: *generated
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ['--maxkb=512']

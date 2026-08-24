@@ -187,7 +187,13 @@ clean:  ## Remove build artifacts and caches
 
 .PHONY: hooks
 hooks:  ## Install the pre-commit hooks
+	@# If `pip install pre-commit` fails with
+	@#   "option use-deprecated: invalid choice: 'legacy-certs'"
+	@# your pip config (~/.config/pip/pip.conf) carries an option modern pip
+	@# rejects. PIP_CONFIG_FILE=/dev/null pip install pre-commit bypasses it.
 	@command -v pre-commit >/dev/null 2>&1 || { \
-		echo "pre-commit not installed — pip install pre-commit"; exit 1; }
+		echo "pre-commit not installed — pip install pre-commit"; \
+		echo "  (if pip errors on 'use-deprecated', prefix: PIP_CONFIG_FILE=/dev/null)"; \
+		exit 1; }
 	pre-commit install
 	@echo "Hooks installed. Run 'pre-commit run --all-files' to check everything now."

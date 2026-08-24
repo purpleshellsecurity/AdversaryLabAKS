@@ -365,12 +365,20 @@ def main() -> int:
     current = VALUES_FILE.read_text(encoding="utf-8")
     updated = splice_into_values(current, render_block_scalar(rule_text))
 
+    # Count the kinds separately: `rules` holds every mapping in the source
+    # files, which includes list:/macro: fragments. Reporting the total as
+    # "rules" overstates the detection count — 6 rules plus a list and a macro
+    # is not 8 rules.
+    n_rules = sum(1 for r in rules if "rule" in r)
+    n_frags = len(rules) - n_rules
+    summary = f"{n_rules} rules" + (f" + {n_frags} list/macro fragments" if n_frags else "")
+
     if updated == current:
-        print(f"helm/falco/values.yaml already up to date ({len(rules)} rules).")
+        print(f"helm/falco/values.yaml already up to date ({summary}).")
         return 0
 
     VALUES_FILE.write_text(updated, encoding="utf-8")
-    print(f"Regenerated helm/falco/values.yaml from {len(rules)} source rules.")
+    print(f"Regenerated helm/falco/values.yaml from {summary}.")
     return 0
 
 
