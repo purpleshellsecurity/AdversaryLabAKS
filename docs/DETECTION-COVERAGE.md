@@ -31,6 +31,16 @@ data. Only a fired attack proves a detection.
 | 🟧 **Backstop** | Weak / evadable; exists as a secondary net behind a stronger rule for the same technique. |
 | ⬜ **Template** | Non-functional until a data source is enabled; schema unverified. |
 
+> **Deployment status (2026-08):** every KQL rule below now deploys as a live
+> Sentinel scheduled analytics rule via `infrastructure/modules/aks_detections.bicep`
+> — previously only T1098.006 did, and the rest were validated and fixture-tested
+> but never ran anywhere. Two deliberate exceptions, both declared in each rule's
+> `.metadata.json` and enforced by `tools/check-detection-wiring.py`:
+> `network-lateral-movement` has `deploy: false` (its table does not exist in this
+> lab), and `lateral-movement` has `enabled: false` (Draft — deploys but does not
+> alert until its FP allowlist is baselined). **Maturity below still means "how much
+> do I trust this alert", not "is it deployed".**
+
 > **Reality check (2026-07):** the CI now runs two things — a *structure* check
 > (`validate.py`) and a **Tier 1 logic test** (`kql_test.py`) that executes the real
 > `.kql` against recorded fixtures in the Kusto emulator on every PR. Current state:

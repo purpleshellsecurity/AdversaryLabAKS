@@ -1,0 +1,30 @@
+{
+  "ruleName": "T1098-ClientCertificateSelfApproval",
+  "displayName": "T1098 - Client Certificate Signed and Self-Approved",
+  "description": "A CertificateSigningRequest was created and approved by the same principal, yielding a client certificate that authenticates to the API server independently of Entra ID. Certificate credentials survive token revocation, making this a durable persistence mechanism (MITRE T1098).",
+  "severity": "High",
+  "tactics": [
+    "Persistence"
+  ],
+  "techniques": [
+    "T1098"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": true,
+  "groupingMatchingMethod": "AllEntities",
+  "entityMappings": [
+    {
+      "entityType": "Account",
+      "fieldMappings": [
+        {
+          "identifier": "FullName",
+          "columnName": "User"
+        }
+      ]
+    }
+  ],
+  "maturity": "proven-tier1"
+}

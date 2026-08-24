@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.42.1.51946",
-      "templateHash": "2813752657957385027"
+      "templateHash": "13704250931759601851"
     }
   },
   "parameters": {
@@ -717,7 +717,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.42.1.51946",
-              "templateHash": "9479976836389155166"
+              "templateHash": "15320871386547532670"
             }
           },
           "parameters": {
@@ -737,7 +737,7 @@
             },
             "userNodeVmSize": {
               "type": "string",
-              "defaultValue": "Standard_D2s_v3"
+              "defaultValue": "Standard_D4s_v3"
             },
             "systemSubnetId": {
               "type": "string"
@@ -759,6 +759,10 @@
               "defaultValue": true
             },
             "enableAzurePolicy": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "enableAdvancedNetworking": {
               "type": "bool",
               "defaultValue": true
             },
@@ -811,7 +815,8 @@
                     "managedOutboundIPs": {
                       "count": 1
                     }
-                  }
+                  },
+                  "advancedNetworking": "[if(parameters('enableAdvancedNetworking'), createObject('enabled', true(), 'observability', createObject('enabled', true()), 'security', createObject('enabled', true())), null())]"
                 },
                 "securityProfile": {
                   "workloadIdentity": {
@@ -1510,7 +1515,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.42.1.51946",
-              "templateHash": "12769113139183708463"
+              "templateHash": "337869362994276418"
             }
           },
           "parameters": {
@@ -1519,7 +1524,7 @@
             }
           },
           "variables": {
-            "$fxv#0": "// ============================================================================\n// Detection: ClusterRoleBinding / RoleBinding Creation by Non-System Principal\n// MITRE ATT&CK: T1098.006 - Additional Container Cluster Roles\n// Source: AKSAudit\n// ============================================================================\n//\n// Logic: RBAC binding creation outside CI/CD or system controllers is rare and\n// almost always suspicious. In a production cluster you'd add Argo/Flux/Helm\n// controllers to the exclusion list — for the lab, only K8s system controllers\n// are excluded.\n\nAKSAudit\n| where TimeGenerated > ago(1h)\n| where Stage == \"ResponseComplete\"\n| where Verb in (\"create\", \"update\", \"patch\")\n| extend\n    Username     = tostring(User.username),\n    Resource     = tostring(ObjectRef.resource),\n    Namespace    = tostring(ObjectRef.namespace),\n    BindingName  = tostring(ObjectRef.name),\n    ResponseCode = toint(ResponseStatus.code),\n    SourceIp     = tostring(SourceIps[0])\n| where Resource in (\"clusterrolebindings\", \"rolebindings\")\n| where ResponseCode between (200 .. 299)\n// Exclude stable system actors\n| where not(Username startswith \"system:serviceaccount:kube-system:\")\n| where not(Username startswith \"system:node:\")\n| where Username != \"system:kube-controller-manager\"\n| project\n    TimeGenerated, Username, Verb, Resource, BindingName, Namespace,\n    SourceIp, UserAgent\n| extend MitreTechnique = \"T1098.006\"\n"
+            "$fxv#0": "// ============================================================================\n// Detection: ClusterRoleBinding / RoleBinding Creation by Non-System Principal\n// MITRE ATT&CK: T1098.006 - Additional Container Cluster Roles\n// Source: AKSAudit\n// ============================================================================\n//\n// Logic: RBAC binding creation outside CI/CD or system controllers is rare and\n// almost always suspicious. In a production cluster you'd add Argo/Flux/Helm\n// controllers to the exclusion list — for the lab, only K8s system controllers\n// are excluded.\n//\n// This is the DETECTION half of the T1098.006 bundle. attack.sh creates a\n// ClusterRoleBinding; the API server logs that write to AKSAudit; this query finds\n// it; rule.bicep runs this query on a schedule as a Sentinel alert.\n\nAKSAudit\n| where TimeGenerated > ago(1h)                       // recent window first\n| where Stage == \"ResponseComplete\"                   // one audit event has multiple stages; keep the final one so we don't double-count\n| where Verb in (\"create\", \"update\", \"patch\")         // any mutation that could establish a binding\n| extend                                              // extend = compute new columns by flattening the nested audit JSON:\n    Username     = tostring(User.username),            //   who made the call\n    Resource     = tostring(ObjectRef.resource),       //   what kind of object\n    Namespace    = tostring(ObjectRef.namespace),      //   its namespace (empty for cluster-scoped)\n    BindingName  = tostring(ObjectRef.name),           //   the binding's name\n    ResponseCode = toint(ResponseStatus.code),         //   HTTP status the API server returned\n    SourceIp     = tostring(SourceIps[0])              //   caller IP (first in the list)\n| where Resource in (\"clusterrolebindings\", \"rolebindings\")  // only RBAC binding objects\n| where ResponseCode between (200 .. 299)             // only calls that actually SUCCEEDED (2xx)\n// Exclude stable system actors — kube-system SAs, node kubelets, and the built-in\n// controller-manager legitimately create bindings; alert on everyone else.\n| where not(Username startswith \"system:serviceaccount:kube-system:\")\n| where not(Username startswith \"system:node:\")\n| where Username != \"system:kube-controller-manager\"\n| project                                             // keep just the columns an analyst needs\n    TimeGenerated, Username, Verb, Resource, BindingName, Namespace,\n    SourceIp, UserAgent\n| extend MitreTechnique = \"T1098.006\"    // tag hits with the ATT&CK sub-technique\n"
           },
           "resources": [
             {
@@ -1578,7 +1583,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.42.1.51946",
-                      "templateHash": "3882065190967333358"
+                      "templateHash": "7287918105388241306"
                     }
                   },
                   "parameters": {
@@ -1665,6 +1670,44 @@
                       "metadata": {
                         "description": "Whether the rule is enabled"
                       }
+                    },
+                    "entityMappings": {
+                      "type": "array",
+                      "defaultValue": [
+                        {
+                          "entityType": "Account",
+                          "fieldMappings": [
+                            {
+                              "identifier": "FullName",
+                              "columnName": "Username"
+                            }
+                          ]
+                        },
+                        {
+                          "entityType": "IP",
+                          "fieldMappings": [
+                            {
+                              "identifier": "Address",
+                              "columnName": "SourceIp"
+                            }
+                          ]
+                        }
+                      ],
+                      "metadata": {
+                        "description": "Sentinel entity mappings — must reference columns the query projects"
+                      }
+                    },
+                    "groupingMatchingMethod": {
+                      "type": "string",
+                      "defaultValue": "AllEntities",
+                      "allowedValues": [
+                        "AllEntities",
+                        "AnyAlert",
+                        "Selected"
+                      ],
+                      "metadata": {
+                        "description": "Incident grouping strategy"
+                      }
                     }
                   },
                   "resources": [
@@ -1688,33 +1731,14 @@
                         "suppressionDuration": "PT5H",
                         "tactics": "[parameters('tactics')]",
                         "techniques": "[parameters('techniques')]",
-                        "entityMappings": [
-                          {
-                            "entityType": "Account",
-                            "fieldMappings": [
-                              {
-                                "identifier": "FullName",
-                                "columnName": "Username"
-                              }
-                            ]
-                          },
-                          {
-                            "entityType": "IP",
-                            "fieldMappings": [
-                              {
-                                "identifier": "Address",
-                                "columnName": "SourceIp"
-                              }
-                            ]
-                          }
-                        ],
+                        "entityMappings": "[parameters('entityMappings')]",
                         "incidentConfiguration": {
                           "createIncident": true,
                           "groupingConfiguration": {
                             "enabled": true,
                             "reopenClosedIncident": false,
                             "lookbackDuration": "PT5H",
-                            "matchingMethod": "AllEntities"
+                            "matchingMethod": "[parameters('groupingMatchingMethod')]"
                           }
                         }
                       }
@@ -1738,6 +1762,643 @@
             "ruleId": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Resources/deployments', 'rule-T1098-006'), '2025-04-01').outputs.ruleId.value]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('workspaceSubscriptionId'), variables('workspaceResourceGroup')), 'Microsoft.Resources/deployments', 'deploy-aks-sentinel')]"
+      ]
+    },
+    {
+      "condition": "[parameters('enableSentinelSolutions')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-detections-kql",
+      "subscriptionId": "[variables('workspaceSubscriptionId')]",
+      "resourceGroup": "[variables('workspaceResourceGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": "[if(variables('useExistingWorkspace'), createObject('value', last(split(parameters('existingWorkspaceResourceId'), '/'))), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'deploy-log-analytics'), '2025-04-01').outputs.workspaceName.value))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "4104373537220325433"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics workspace name"
+              }
+            }
+          },
+          "variables": {
+            "$fxv#0": {
+              "ruleName": "T1610-PrivilegedPodCreation",
+              "displayName": "T1610 - Privileged Pod Created by Non-System Principal",
+              "description": "A pod was created with securityContext.privileged=true by a principal outside the AKS system controller set. A privileged container holds all capabilities and effectively unrestricted host access — the most direct route to node compromise (MITRE T1610).",
+              "severity": "High",
+              "tactics": [
+                "PrivilegeEscalation"
+              ],
+              "techniques": [
+                "T1610"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AllEntities",
+              "entityMappings": [
+                {
+                  "entityType": "Account",
+                  "fieldMappings": [
+                    {
+                      "identifier": "FullName",
+                      "columnName": "User"
+                    }
+                  ]
+                },
+                {
+                  "entityType": "IP",
+                  "fieldMappings": [
+                    {
+                      "identifier": "Address",
+                      "columnName": "ClientIp"
+                    }
+                  ]
+                }
+              ],
+              "maturity": "proven-tier1"
+            },
+            "$fxv#1": "// ============================================================================\n// Detection: Privileged Pod Creation\n// MITRE ATT&CK: T1610 - Deploy Container\n// Source: AKSAuditAdmin\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// A container with securityContext.privileged=true runs with all capabilities and\n// effectively unrestricted access to the host — the easiest breakout there is. An\n// attacker who can create pods deploys a privileged one to gain a foothold on the\n// node (T1610 Deploy Container). This fires at admission (pod `create`).\n//\n// Two mechanics matter:\n//   1. A privileged container can hide in ANY of three lists — containers,\n//      initContainers, ephemeralContainers — so we array_concat all three into one\n//      list before scanning. coalesce(..., dynamic([])) turns a missing list into\n//      an empty array so the concat never fails on nulls.\n//   2. mv-apply then checks EACH container, so a single privileged sidecar is\n//      caught and reported BY NAME (not just \"the pod had something privileged\").\n//\n// TABLE: AKSAuditAdmin — write/mutating audit events (pod `create`).\n\nAKSAuditAdmin\n| where TimeGenerated > ago(1h)                                  // recent window first\n| where Verb == \"create\" and ObjectRef.resource == \"pods\"       // only pod-creation events\n// Merge the three possible container lists into one array to scan uniformly.\n// coalesce() supplies an empty array when a given list is absent (null-safe concat).\n| extend allContainers = array_concat(\n    coalesce(RequestObject.spec.containers,          dynamic([])),   // normal app containers\n    coalesce(RequestObject.spec.initContainers,      dynamic([])),   // init containers\n    coalesce(RequestObject.spec.ephemeralContainers, dynamic([])))   // debug/ephemeral containers\n// Expand to one row per container; keep only those explicitly marked privileged.\n| mv-apply container = allContainers on (\n    where container.securityContext.privileged == true   // null-safe: unset != true\n    | project ContainerName = tostring(container.name), Image = tostring(container.image)  // name + image of the offender\n  )\n// Tune: AKS system DaemonSets (kube-proxy, CSI node drivers) are legitimately\n// privileged — allowlist kube-system controllers, alert on everyone else.\n| where User.username != \"aksService\" and User.username !startswith \"system:\"  // drop AKS + control-plane creators\n| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where\n          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),           // which pod\n          ContainerName, Image, RequestUri                                                     // which container + image\n| extend MitreTechnique = \"T1610\"    // tag with the ATT&CK technique\n",
+            "$fxv#10": {
+              "ruleName": "T1098-ClientCertificateSelfApproval",
+              "displayName": "T1098 - Client Certificate Signed and Self-Approved",
+              "description": "A CertificateSigningRequest was created and approved by the same principal, yielding a client certificate that authenticates to the API server independently of Entra ID. Certificate credentials survive token revocation, making this a durable persistence mechanism (MITRE T1098).",
+              "severity": "High",
+              "tactics": [
+                "Persistence"
+              ],
+              "techniques": [
+                "T1098"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AllEntities",
+              "entityMappings": [
+                {
+                  "entityType": "Account",
+                  "fieldMappings": [
+                    {
+                      "identifier": "FullName",
+                      "columnName": "User"
+                    }
+                  ]
+                }
+              ],
+              "maturity": "proven-tier1"
+            },
+            "$fxv#11": "// ============================================================================\n// Detection: Client Certificate Credential via CSR (Self-Approved)\n// MITRE ATT&CK: T1098 - Account Manipulation\n// Source: AKSAuditAdmin\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// Kubernetes lets you request a signed client certificate through the\n// CertificateSigningRequest (CSR) API: you `create` a CSR, then someone with\n// rights `update`s its /approval subresource, and the cluster CA signs it. A\n// signed client cert authenticates to the API server as whatever user/groups\n// the CSR named — so a self-approved CSR is a way to MINT durable credentials\n// (T1098 Account Manipulation / credential creation).\n//\n// The strong signal here is a SEPARATION-OF-DUTY violation: the SAME principal\n// both creates the CSR and approves it. Legitimate flows split requester from\n// approver (kubelet requests, certificate-controller approves).\n//\n// TABLE: AKSAuditAdmin — the \"admin\" slice of the Kubernetes audit log. It keeps\n//        WRITE/mutating events (create/update/delete) but not routine reads, so\n//        it is the right, cheaper table for approval-workflow tampering.\n\nAKSAuditAdmin\n| where TimeGenerated > ago(1h)                                       // prune to the recent window first\n| where ObjectRef.resource == \"certificatesigningrequests\"           // only CSR API objects\n// Keep BOTH halves of the flow: the initial create, AND updates that hit the\n// /approval subresource (the moment a CSR is signed off). Either alone is noise;\n// the pair from one user is the finding.\n| where (Verb == \"create\") or (Verb == \"update\" and ObjectRef.subresource == \"approval\")\n// Tune: kubelets create CSRs and certificate-controller approves them — both system:*.\n| where User.username !startswith \"system:\"                          // drop built-in control-plane actors\n| project TimeGenerated, User = tostring(User.username), Verb,       // project = keep just these columns...\n          Sub = tostring(ObjectRef.subresource), CSR = tostring(ObjectRef.name), RequestUri\n| sort by TimeGenerated asc   // create then approval from one user = self-signed credential\n| extend MitreTechnique = \"T1098\"    // tag hits with the ATT&CK technique\n",
+            "$fxv#12": {
+              "ruleName": "T1611-ContainerEscapeIndicators",
+              "displayName": "T1611 - Container Escape Indicators in Container Logs",
+              "description": "Container stdout/stderr matched strings associated with escape tooling and techniques (nsenter, release_agent, core_pattern). BACKSTOP rule: log-string matching is evadable and sits behind the Falco syscall rule for the same technique (MITRE T1611).",
+              "severity": "Medium",
+              "tactics": [
+                "PrivilegeEscalation"
+              ],
+              "techniques": [
+                "T1611"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AnyAlert",
+              "entityMappings": [],
+              "maturity": "backstop"
+            },
+            "$fxv#13": "// ============================================================================\n// Detection: Container Escape via nsenter\n// MITRE ATT&CK: T1611 - Escape to Host\n// Source: AKSAudit + ContainerLogV2\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// `nsenter` enters another process's Linux namespaces. Inside a privileged\n// container an attacker runs `nsenter --target 1 --mount ...` to jump into the\n// HOST's namespaces (PID 1 = the node's init) and effectively break out of the\n// container onto the node — that is T1611 (Escape to Host).\n//\n// This query is LOG/STDOUT-based: it scans container stdout/stderr captured in\n// Log Analytics for the literal string \"nsenter\". It is the cheap, always-on\n// complement to the Falco syscall rule (detections/falco/container-escape.yaml),\n// which catches the actual process spawn at the kernel level.\n//\n// TABLE: ContainerLogV2 — the Azure Monitor for Containers table holding one row\n//        per container stdout/stderr line, enriched with pod/namespace metadata.\n\nContainerLogV2                       // read collected container console logs\n| where TimeGenerated > ago(1h)      // time filter first (cheapest, prunes the scan window)\n| where LogMessage has \"nsenter\"     // `has` = whole-token match on the log text; the escape tell\n| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage  // keep only the analyst-relevant columns\n| extend MitreTechnique = \"T1611\"    // tag every hit with the ATT&CK technique for triage/reporting\n",
+            "$fxv#14": {
+              "ruleName": "T1496-CryptoMiningIndicators",
+              "displayName": "T1496 - Crypto Mining Indicators in Container Logs",
+              "description": "Container stdout/stderr matched miner binary names, mining-pool protocol strings, or known pool hostnames. BACKSTOP rule: signature matching misses renamed or novel miners and sits behind the Falco process rule for the same technique (MITRE T1496).",
+              "severity": "Medium",
+              "tactics": [
+                "Impact"
+              ],
+              "techniques": [
+                "T1496"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AnyAlert",
+              "entityMappings": [],
+              "maturity": "backstop"
+            },
+            "$fxv#15": "// ============================================================================\n// Detection: Cryptocurrency Mining in Container\n// MITRE ATT&CK: T1496 - Resource Hijacking\n// Source: ContainerLogV2 + InsightsMetrics\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// Crypto mining (T1496 Resource Hijacking) steals the cluster's CPU to mine coins.\n// There are two complementary ways to catch it, and this file ships both:\n//\n//   1. PROCESS/SIGNATURE (active below): scan container logs for the fingerprints\n//      of miners — binary names (xmrig, minerd), mining-pool protocol strings\n//      (stratum+tcp), algorithm names (cryptonight), and known pool hostnames.\n//   2. CPU ANOMALY (commented out): watch resource metrics for sustained high CPU,\n//      which catches unknown/renamed miners that leave no signature.\n//\n// The signature approach is precise (low false positives) but misses novel miners;\n// the anomaly approach is the safety net. In production you'd run both.\n\n// --- Approach 1: signature match on container stdout/stderr -------------------\n// TABLE: ContainerLogV2 — collected container console output.\nContainerLogV2\n| where TimeGenerated > ago(1h)          // recent window first\n// has_any = match if the log line contains ANY of these tokens. Mix of binary\n// names, pool-protocol markers, and a known pool hostname — the miner's fingerprints.\n| where LogMessage has_any (\"xmrig\", \"minerd\", \"stratum+tcp\", \"cryptonight\", \"pool.minexmr\")\n| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage  // analyst-relevant columns\n| extend MitreTechnique = \"T1496\"        // tag with the ATT&CK technique\n\n// --- Approach 2: CPU anomaly (DISABLED — reference implementation) ------------\n// Enable when signature coverage isn't enough; catches renamed/unknown miners.\n// TABLE: InsightsMetrics — the Azure Monitor container metrics table.\n// InsightsMetrics\n// | where TimeGenerated > ago(1h)\n// | where Namespace == \"container.azm.ms/cpu\"        // the CPU metric namespace\n// | where Name == \"cpuUsageNanoCores\"                // per-container CPU usage counter\n// | extend Tags = parse_json(Tags)                   // Tags is JSON; parse to read podName/podNamespace\n// | where todouble(Val) > 1800000000 // >1.8 cores sustained = suspicious\n// | project TimeGenerated, PodName = tostring(Tags.podName), Namespace = tostring(Tags.podNamespace), CpuNanoCores = Val\n",
+            "$fxv#16": {
+              "ruleName": "T1550-CrossNamespaceTokenUse",
+              "displayName": "T1550.001 - ServiceAccount Token Used Across Namespaces",
+              "description": "A ServiceAccount token was used to act on resources outside its own namespace, consistent with reuse of a stolen credential to pivot (MITRE T1550.001).",
+              "severity": "Medium",
+              "tactics": [
+                "LateralMovement"
+              ],
+              "techniques": [
+                "T1550"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": false,
+              "deploy": true,
+              "groupingMatchingMethod": "AllEntities",
+              "entityMappings": [
+                {
+                  "entityType": "Account",
+                  "fieldMappings": [
+                    {
+                      "identifier": "FullName",
+                      "columnName": "Username"
+                    }
+                  ]
+                }
+              ],
+              "maturity": "draft"
+            },
+            "$fxv#17": "// ============================================================================\n// Detection: Lateral Movement via Cross-Namespace Token Use\n// MITRE ATT&CK: T1550.001 - Application Access Token\n// Source: AKSAudit\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// A ServiceAccount identity is namespaced: its username has the shape\n// `system:serviceaccount:<namespace>:<name>`. Normally a workload's SA only ever\n// touches resources in its OWN namespace. When an SA from namespace A starts\n// acting on resources in namespace B, that's a strong lateral-movement signal —\n// the attacker stole a token in A and is reusing it to reach into B\n// (T1550.001 Use Alternate Authentication Material: Application Access Token).\n//\n// The core trick: derive the SOURCE namespace from the SA username, compare it to\n// the TARGET namespace on the object being accessed, and alert when they differ.\n//\n// TABLE: AKSAudit — the full audit log (we need reads: get/list, not just writes).\n\nAKSAudit\n| where TimeGenerated > ago(1h)                          // recent window first\n| where Verb in (\"get\", \"list\", \"create\", \"exec\")        // read/create/exec — the actions worth tracking\n| extend Username = tostring(User.username)               // pull the caller identity out as a string\n// extract() runs a regex and returns capture group 1: the namespace embedded in a\n// ServiceAccount username. For a non-SA (a human/AAD user) there's no match -> \"\".\n| extend SourceNamespace = extract(\"system:serviceaccount:([^:]+):\", 1, Username)\n| extend TargetNamespace = tostring(ObjectRef.namespace)  // the namespace of the object being touched\n| where isnotempty(SourceNamespace)                       // keep only ServiceAccount callers\n| where isnotempty(TargetNamespace)                       // keep only namespaced target objects\n| where SourceNamespace != TargetNamespace                // THE FINDING: cross-namespace access\n| project TimeGenerated, Username, SourceNamespace, TargetNamespace, Verb, Resource = tostring(ObjectRef.resource)  // who went where, doing what\n| extend MitreTechnique = \"T1550.001\"    // tag with the ATT&CK sub-technique\n",
+            "$fxv#18": {
+              "ruleName": "T1046-EastWestFlowAnomaly",
+              "displayName": "T1046 - Unexpected East-West Pod-to-Pod Flow",
+              "description": "Cross-namespace pod-to-pod network flows that fall outside the baseline, consistent with in-cluster service discovery or pivoting (MITRE T1046).",
+              "severity": "Medium",
+              "tactics": [
+                "Discovery"
+              ],
+              "techniques": [
+                "T1046"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": false,
+              "groupingMatchingMethod": "AnyAlert",
+              "entityMappings": [],
+              "maturity": "template"
+            },
+            "$fxv#19": "// ============================================================================\n// Detection: Unexpected East-West (Pod-to-Pod) Network Flow\n// MITRE ATT&CK: T1046 - Network Service Discovery\n// Source: Container Network Logs (ACNS / Hubble)  [TEMPLATE — see notes below]\n// ============================================================================\n//\n// STATUS: TEMPLATE / UNVERIFIED. This is the network-plane complement to\n// lateral-movement.kql (which is audit/token-based). It requires the pod-to-pod\n// flow-log plane, which is NOT enabled by default.\n//\n// ENABLEMENT (two steps):\n//   1. ACNS observability — set in infrastructure/modules/aks_cluster.bicep\n//      (networkProfile.advancedNetworking.observability). This turns on Hubble.\n//   2. Stored \"Container Network Logs\" → Log Analytics — a SEPARATE, newer AKS\n//      feature (flow logs land in a resource-specific table, queryable with KQL).\n//      Its enablement path and exact TABLE NAME + SCHEMA are evolving — CONFIRM\n//      against current AKS docs and a captured sample before trusting this query.\n//      The table below is a placeholder; adjust field names to the real schema.\n//\n// Once real flow-log data exists, capture a sample and tune this exactly the way\n// the audit detections were tuned — the field paths here are best-effort, not verified.\n//\n// Idea: an attacker moving laterally opens NEW cross-namespace pod-to-pod flows —\n// connections between namespaces that normally never talk. Baseline the legitimate\n// pairs first, then alert on the rest.\n\n// HOW THIS DETECTION WORKS (once the flow-log plane exists)\n// ---------------------------------------------------------\n// Unlike the other detections, this reads the NETWORK plane (pod-to-pod flow logs\n// from Cilium/Hubble), not the API audit log. The idea: an attacker mapping the\n// cluster or pivoting between workloads opens NEW east-west connections between\n// namespaces that normally never talk (T1046 Network Service Discovery). We keep\n// only cross-namespace, successfully-forwarded flows and roll them up per pod-pair.\n//\n// TABLE: RetinaNetworkFlowLogs — PLACEHOLDER name; confirm against the real\n//        Container Network Logs schema before trusting this.\n\n// CONFIRM the table name once Container Network Logs are enabled (placeholder):\nRetinaNetworkFlowLogs\n| where TimeGenerated > ago(1h)        // recent window first\n| where FlowType == \"L3_L4\"            // adjust to real schema — keep network-layer connection flows\n| where Verdict == \"FORWARDED\"         // only flows the network policy ALLOWED (a real connection happened)\n| where SourceNamespace != DestinationNamespace          // cross-namespace = east-west\n| where SourceNamespace !in (\"kube-system\", \"gatekeeper-system\")   // baseline / allowlist\n// summarize = aggregate. Per (source pod, dest pod, 5-min bucket) count the flows\n// and collect the DISTINCT destination ports touched (make_set) — a pod hitting\n// many ports on a peer looks like scanning/discovery.\n| summarize Flows = count(), Ports = make_set(DestinationPort)\n        by SourceNamespace, SourcePod = SourcePodName,\n           DestinationNamespace, DestinationPod = DestinationPodName, bin(TimeGenerated, 5m)  // bin() = fixed 5-min time buckets\n| extend MitreTechnique = \"T1046\"    // tag with the ATT&CK technique\n",
+            "$fxv#2": {
+              "ruleName": "T1611-HostPathVolumeMount",
+              "displayName": "T1611 - Pod Mounted a Sensitive hostPath Volume",
+              "description": "A pod was created mounting a hostPath volume that exposes the node filesystem. Mounting paths such as / or /var/run/docker.sock lets a container read or modify host state and escape its isolation boundary (MITRE T1611).",
+              "severity": "High",
+              "tactics": [
+                "PrivilegeEscalation"
+              ],
+              "techniques": [
+                "T1611"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AllEntities",
+              "entityMappings": [
+                {
+                  "entityType": "Account",
+                  "fieldMappings": [
+                    {
+                      "identifier": "FullName",
+                      "columnName": "User"
+                    }
+                  ]
+                },
+                {
+                  "entityType": "IP",
+                  "fieldMappings": [
+                    {
+                      "identifier": "Address",
+                      "columnName": "ClientIp"
+                    }
+                  ]
+                }
+              ],
+              "maturity": "proven-tier1"
+            },
+            "$fxv#3": "// ============================================================================\n// Detection: hostPath Volume Mount (Container Breakout Vector)\n// MITRE ATT&CK: T1611 - Escape to Host\n// Source: AKSAuditAdmin\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// A `hostPath` volume mounts a directory from the NODE's filesystem into the pod.\n// Mount something sensitive (/ , /var/run/docker.sock, /etc/kubernetes) and the\n// container has a window onto the host — the classic container-breakout primitive\n// (T1611 Escape to Host). This detection fires at ADMISSION time, when the pod is\n// created, so you catch it before the workload even runs.\n//\n// The interesting mechanic is mv-apply: a pod can declare MANY volumes, so we need\n// to inspect the spec.volumes ARRAY element-by-element and keep only the pods that\n// have at least one hostPath entry — reporting exactly which volume and host path.\n//\n// TABLE: AKSAuditAdmin — write/mutating audit events (pod `create` lands here).\n\nAKSAuditAdmin\n| where TimeGenerated > ago(1h)                                  // recent window first\n| where Verb == \"create\" and ObjectRef.resource == \"pods\"       // only pod-creation events\n// mv-apply expands the spec.volumes array into one virtual row per volume, runs\n// the inner pipeline on each, and keeps only rows that survive it. The inner\n// `where isnotempty(volume.hostPath)` drops every non-hostPath volume, so a pod\n// with zero hostPath volumes produces no rows (and drops out of the results).\n| mv-apply volume = RequestObject.spec.volumes on (\n    where isnotempty(volume.hostPath)                                          // keep hostPath volumes only\n    | project VolumeName = tostring(volume.name), HostPath = tostring(volume.hostPath.path)  // surface the volume + host dir\n  )\n// Tune: CSI node drivers / monitoring agents legitimately mount hostPath in\n// kube-system — allowlist those, alert on hostPath in workload namespaces.\n| where User.username != \"aksService\" and User.username !startswith \"system:\"  // drop AKS + control-plane creators\n| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where\n          Namespace = tostring(ObjectRef.namespace), Pod = tostring(ObjectRef.name),           // which pod\n          VolumeName, HostPath, RequestUri                                                     // and exactly what it mounted\n| extend MitreTechnique = \"T1611\"    // tag with the ATT&CK technique\n",
+            "$fxv#4": {
+              "ruleName": "T1611-NodesProxyGrant",
+              "displayName": "T1611 - RBAC Grant for nodes/proxy Subresource",
+              "description": "An RBAC rule granting access to the nodes/proxy subresource was created. That subresource reaches the kubelet API directly, bypassing the API server's admission and audit controls and allowing command execution on the node (MITRE T1611).",
+              "severity": "High",
+              "tactics": [
+                "PrivilegeEscalation"
+              ],
+              "techniques": [
+                "T1611"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AllEntities",
+              "entityMappings": [
+                {
+                  "entityType": "Account",
+                  "fieldMappings": [
+                    {
+                      "identifier": "FullName",
+                      "columnName": "User"
+                    }
+                  ]
+                },
+                {
+                  "entityType": "IP",
+                  "fieldMappings": [
+                    {
+                      "identifier": "Address",
+                      "columnName": "ClientIp"
+                    }
+                  ]
+                }
+              ],
+              "maturity": "proven-tier1"
+            },
+            "$fxv#5": "// ============================================================================\n// Detection: ClusterRole Granting nodes/proxy (Kubelet API Access)\n// MITRE ATT&CK: T1611 - Escape to Host\n// Source: AKSAuditAdmin\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// The nodes/proxy RBAC verb lets a subject talk to the KUBELET API on each node\n// directly — which allows executing commands in ANY pod on that node, i.e. a path\n// to the host / privilege escalation (T1611 Escape to Host).\n//\n// DETECTION-DESIGN INSIGHT: you CANNOT reliably catch the abuse at call time,\n// because the proxied request goes to the kubelet and does not appear as a\n// nodes/proxy call in the API-server audit log. So we detect the ENABLER instead:\n// the creation of a ClusterRole whose rules grant `nodes/proxy`. That RBAC write\n// is durable and always audited.\n//\n// A ClusterRole has an ARRAY of rules, each with a `resources` list, so we use\n// mv-apply to inspect every rule and keep roles where any rule lists nodes/proxy.\n//\n// TABLE: AKSAuditAdmin — write/mutating audit events (ClusterRole `create`).\n\nAKSAuditAdmin\n| where TimeGenerated > ago(1h)                                  // recent window first\n| where Verb == \"create\" and ObjectRef.resource == \"clusterroles\"  // only ClusterRole creations\n// Tune: the built-in system:prometheus role also grants nodes/proxy, created by aksService.\n| where User.username != \"aksService\" and User.username !startswith \"system:\"  // drop AKS + control-plane creators\n// mv-apply expands the rules[] array to one row per rule; the inner where keeps\n// only rules whose `resources` list contains \"nodes/proxy\" (set_has_element =\n// membership test on an array). Rules without it are dropped; a role with no\n// matching rule yields no rows and falls out.\n| mv-apply rule = RequestObject.rules on (\n    where set_has_element(rule.resources, \"nodes/proxy\")   // wildcard \"*\" roles are caught by privileged-RBAC detections\n    | project Resources = tostring(rule.resources), Verbs = tostring(rule.verbs)  // surface what the rule grants\n  )\n| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where\n          ClusterRole = tostring(ObjectRef.name), Resources, Verbs, RequestUri                 // which role + the offending grant\n| extend MitreTechnique = \"T1611\"    // tag with the ATT&CK technique\n",
+            "$fxv#6": {
+              "ruleName": "T1552-SecretEnumeration",
+              "displayName": "T1552.007 - Bulk Secret Enumeration via Container API",
+              "description": "A principal listed or read Kubernetes Secrets at a rate or scope consistent with harvesting rather than normal application access. Secrets commonly hold registry credentials, cloud tokens, and database passwords (MITRE T1552.007).",
+              "severity": "High",
+              "tactics": [
+                "CredentialAccess"
+              ],
+              "techniques": [
+                "T1552"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AllEntities",
+              "entityMappings": [
+                {
+                  "entityType": "Account",
+                  "fieldMappings": [
+                    {
+                      "identifier": "FullName",
+                      "columnName": "User"
+                    }
+                  ]
+                },
+                {
+                  "entityType": "IP",
+                  "fieldMappings": [
+                    {
+                      "identifier": "Address",
+                      "columnName": "ClientIp"
+                    }
+                  ]
+                }
+              ],
+              "maturity": "proven-tier1"
+            },
+            "$fxv#7": "// ============================================================================\n// Detection: Cluster-Wide Secret Dump\n// MITRE ATT&CK: T1552.007 - Unsecured Credentials: Container API\n// Source: AKSAudit\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// To grab every Secret in the cluster at once, an attacker issues ONE `list`\n// against the cluster-scoped path /api/v1/secrets — the API server returns Secrets\n// from ALL namespaces in a single response (T1552.007, credentials via the\n// container/K8s API).\n//\n// KEY MODELLING INSIGHT: because it's a single list, \"count how many secret reads\n// per user\" is the WRONG detection model — there's only one call. The tell is the\n// cluster-scoped URI itself. Compare:\n//   - cluster-wide (this):     /api/v1/secrets\n//   - namespaced (normal app): /api/v1/namespaces/<ns>/secrets\n//\n// TABLE: AKSAudit — the FULL kube audit log including reads (get/list/watch).\n//        This must NOT use AKSAuditAdmin, which drops non-mutating reads and so\n//        would never see a `list`.\n\nAKSAudit\n| where TimeGenerated > ago(1h)                                  // recent window first\n| where ObjectRef.resource == \"secrets\" and Verb == \"list\"       // only bulk Secret reads\n| where RequestUri startswith \"/api/v1/secrets\"   // cluster-wide, all namespaces\n// Tune: controllers (generic-garbage-collector, resourcequota, namespace-controller)\n// list secrets cluster-wide as `system:*` — allowlist those, alert on humans/app SAs.\n| where User.username != \"aksService\" and User.username !startswith \"system:\"  // drop AKS + control-plane\n| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]), RequestUri  // who + from where + exact path\n| extend MitreTechnique = \"T1552.007\"    // tag with the ATT&CK sub-technique\n",
+            "$fxv#8": {
+              "ruleName": "T1098-ServiceAccountTokenCreation",
+              "displayName": "T1098 - ServiceAccount Token Minted via TokenRequest API",
+              "description": "A principal minted a ServiceAccount token through the TokenRequest API. This is the supported way to obtain a credential for an identity other than one's own, and is a common persistence and privilege-escalation step (MITRE T1098).",
+              "severity": "High",
+              "tactics": [
+                "Persistence"
+              ],
+              "techniques": [
+                "T1098"
+              ],
+              "queryFrequency": "PT15M",
+              "queryPeriod": "PT1H",
+              "triggerThreshold": 0,
+              "enabled": true,
+              "deploy": true,
+              "groupingMatchingMethod": "AllEntities",
+              "entityMappings": [
+                {
+                  "entityType": "Account",
+                  "fieldMappings": [
+                    {
+                      "identifier": "FullName",
+                      "columnName": "User"
+                    }
+                  ]
+                },
+                {
+                  "entityType": "IP",
+                  "fieldMappings": [
+                    {
+                      "identifier": "Address",
+                      "columnName": "ClientIp"
+                    }
+                  ]
+                }
+              ],
+              "maturity": "proven-tier1"
+            },
+            "$fxv#9": "// ============================================================================\n// Detection: Long-Lived Service Account Token Minted\n// MITRE ATT&CK: T1098 - Account Manipulation\n// Source: AKSAuditAdmin\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// The TokenRequest API (POST serviceaccounts/<name>/token) issues a bearer token\n// for a ServiceAccount on demand. An attacker who can call it against a PRIVILEGED\n// existing SA (e.g. kube-system's clusterrole-aggregation-controller) walks away\n// with that SA's cluster rights — persistence / credential creation, T1098.\n//\n// DISAMBIGUATION: nodes-proxy.kql's attack ALSO ends in a TokenRequest. Tell the\n// two apart by the TARGET ServiceAccount:\n//   - an EXISTING privileged kube-system SA -> this detection\n//   - a fresh, purpose-built SA the attacker just created -> nodes-proxy\n//\n// TABLE: AKSAuditAdmin — write/mutating audit events only (TokenRequest is a\n//        `create`, so it lands here rather than in the full-read AKSAudit table).\n\nAKSAuditAdmin\n| where TimeGenerated > ago(1h)                          // recent window first\n// Match exactly the TokenRequest call: create + serviceaccounts resource + the\n// `token` subresource. All three conditions pin it to token minting, nothing else.\n| where Verb == \"create\" and ObjectRef.resource == \"serviceaccounts\" and ObjectRef.subresource == \"token\"\n// Tune: kubelets (system:node:*) mint projected tokens constantly — allowlist them.\n| where User.username != \"aksService\" and User.username !startswith \"system:\"  // drop AKS + control-plane callers\n| project TimeGenerated, User = tostring(User.username), ClientIp = tostring(SourceIps[0]),   // who + from where\n          Namespace = tostring(ObjectRef.namespace), ServiceAccount = tostring(ObjectRef.name), RequestUri  // which SA got a token\n| extend MitreTechnique = \"T1098\"    // tag with the ATT&CK technique\n",
+            "detections": [
+              "[union(variables('$fxv#0'), createObject('query', variables('$fxv#1')))]",
+              "[union(variables('$fxv#2'), createObject('query', variables('$fxv#3')))]",
+              "[union(variables('$fxv#4'), createObject('query', variables('$fxv#5')))]",
+              "[union(variables('$fxv#6'), createObject('query', variables('$fxv#7')))]",
+              "[union(variables('$fxv#8'), createObject('query', variables('$fxv#9')))]",
+              "[union(variables('$fxv#10'), createObject('query', variables('$fxv#11')))]",
+              "[union(variables('$fxv#12'), createObject('query', variables('$fxv#13')))]",
+              "[union(variables('$fxv#14'), createObject('query', variables('$fxv#15')))]",
+              "[union(variables('$fxv#16'), createObject('query', variables('$fxv#17')))]",
+              "[union(variables('$fxv#18'), createObject('query', variables('$fxv#19')))]"
+            ],
+            "deployableDetections": "[filter(variables('detections'), lambda('d', lambdaVariables('d').deploy))]"
+          },
+          "resources": [
+            {
+              "copy": {
+                "name": "detectionRules",
+                "count": "[length(variables('deployableDetections'))]"
+              },
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('detection-{0}', variables('deployableDetections')[copyIndex()].ruleName)]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "workspaceName": {
+                    "value": "[parameters('workspaceName')]"
+                  },
+                  "ruleName": {
+                    "value": "[variables('deployableDetections')[copyIndex()].ruleName]"
+                  },
+                  "displayName": {
+                    "value": "[variables('deployableDetections')[copyIndex()].displayName]"
+                  },
+                  "ruleDescription": {
+                    "value": "[variables('deployableDetections')[copyIndex()].description]"
+                  },
+                  "severity": {
+                    "value": "[variables('deployableDetections')[copyIndex()].severity]"
+                  },
+                  "queryContent": {
+                    "value": "[variables('deployableDetections')[copyIndex()].query]"
+                  },
+                  "queryFrequency": {
+                    "value": "[variables('deployableDetections')[copyIndex()].queryFrequency]"
+                  },
+                  "queryPeriod": {
+                    "value": "[variables('deployableDetections')[copyIndex()].queryPeriod]"
+                  },
+                  "triggerThreshold": {
+                    "value": "[variables('deployableDetections')[copyIndex()].triggerThreshold]"
+                  },
+                  "tactics": {
+                    "value": "[variables('deployableDetections')[copyIndex()].tactics]"
+                  },
+                  "techniques": {
+                    "value": "[variables('deployableDetections')[copyIndex()].techniques]"
+                  },
+                  "enabled": {
+                    "value": "[variables('deployableDetections')[copyIndex()].enabled]"
+                  },
+                  "entityMappings": {
+                    "value": "[variables('deployableDetections')[copyIndex()].entityMappings]"
+                  },
+                  "groupingMatchingMethod": {
+                    "value": "[variables('deployableDetections')[copyIndex()].groupingMatchingMethod]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.42.1.51946",
+                      "templateHash": "7287918105388241306"
+                    }
+                  },
+                  "parameters": {
+                    "workspaceName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Log Analytics workspace name"
+                      }
+                    },
+                    "ruleName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Rule name (no spaces, alphanumeric + dashes)"
+                      }
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Display name shown in Sentinel UI"
+                      }
+                    },
+                    "ruleDescription": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Description of what the rule detects"
+                      }
+                    },
+                    "severity": {
+                      "type": "string",
+                      "allowedValues": [
+                        "Informational",
+                        "Low",
+                        "Medium",
+                        "High"
+                      ],
+                      "metadata": {
+                        "description": "Severity: Informational, Low, Medium, High"
+                      }
+                    },
+                    "queryContent": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "The KQL query content (loaded via loadTextContent in caller)"
+                      }
+                    },
+                    "queryFrequency": {
+                      "type": "string",
+                      "defaultValue": "PT15M",
+                      "metadata": {
+                        "description": "How often the rule runs (ISO 8601 duration, e.g. PT15M)"
+                      }
+                    },
+                    "queryPeriod": {
+                      "type": "string",
+                      "defaultValue": "PT1H",
+                      "metadata": {
+                        "description": "How far back the query looks (ISO 8601 duration)"
+                      }
+                    },
+                    "triggerThreshold": {
+                      "type": "int",
+                      "defaultValue": 0,
+                      "metadata": {
+                        "description": "Threshold above which to fire — 0 means any match fires"
+                      }
+                    },
+                    "tactics": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "MITRE ATT&CK tactics"
+                      }
+                    },
+                    "techniques": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "MITRE ATT&CK technique IDs (without sub-technique suffix)"
+                      }
+                    },
+                    "enabled": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Whether the rule is enabled"
+                      }
+                    },
+                    "entityMappings": {
+                      "type": "array",
+                      "defaultValue": [
+                        {
+                          "entityType": "Account",
+                          "fieldMappings": [
+                            {
+                              "identifier": "FullName",
+                              "columnName": "Username"
+                            }
+                          ]
+                        },
+                        {
+                          "entityType": "IP",
+                          "fieldMappings": [
+                            {
+                              "identifier": "Address",
+                              "columnName": "SourceIp"
+                            }
+                          ]
+                        }
+                      ],
+                      "metadata": {
+                        "description": "Sentinel entity mappings — must reference columns the query projects"
+                      }
+                    },
+                    "groupingMatchingMethod": {
+                      "type": "string",
+                      "defaultValue": "AllEntities",
+                      "allowedValues": [
+                        "AllEntities",
+                        "AnyAlert",
+                        "Selected"
+                      ],
+                      "metadata": {
+                        "description": "Incident grouping strategy"
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.SecurityInsights/alertRules",
+                      "apiVersion": "2023-12-01-preview",
+                      "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+                      "name": "[parameters('ruleName')]",
+                      "kind": "Scheduled",
+                      "properties": {
+                        "displayName": "[parameters('displayName')]",
+                        "description": "[parameters('ruleDescription')]",
+                        "severity": "[parameters('severity')]",
+                        "enabled": "[parameters('enabled')]",
+                        "query": "[parameters('queryContent')]",
+                        "queryFrequency": "[parameters('queryFrequency')]",
+                        "queryPeriod": "[parameters('queryPeriod')]",
+                        "triggerOperator": "GreaterThan",
+                        "triggerThreshold": "[parameters('triggerThreshold')]",
+                        "suppressionEnabled": false,
+                        "suppressionDuration": "PT5H",
+                        "tactics": "[parameters('tactics')]",
+                        "techniques": "[parameters('techniques')]",
+                        "entityMappings": "[parameters('entityMappings')]",
+                        "incidentConfiguration": {
+                          "createIncident": true,
+                          "groupingConfiguration": {
+                            "enabled": true,
+                            "reopenClosedIncident": false,
+                            "lookbackDuration": "PT5H",
+                            "matchingMethod": "[parameters('groupingMatchingMethod')]"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "ruleId": {
+                      "type": "string",
+                      "value": "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'Microsoft.SecurityInsights/alertRules', parameters('ruleName'))]"
+                    },
+                    "ruleName": {
+                      "type": "string",
+                      "value": "[parameters('ruleName')]"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "deployedRuleNames": {
+              "type": "array",
+              "copy": {
+                "count": "[length(variables('deployableDetections'))]",
+                "input": "[variables('deployableDetections')[copyIndex()].ruleName]"
+              }
+            },
+            "deployedRuleCount": {
+              "type": "int",
+              "value": "[length(variables('deployableDetections'))]"
+            },
+            "enabledRuleCount": {
+              "type": "int",
+              "value": "[length(filter(variables('deployableDetections'), lambda('d', lambdaVariables('d').enabled)))]"
             }
           }
         }
@@ -2644,6 +3305,14 @@
     "keyVaultUri": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'deploy-keyvault'), '2025-04-01').outputs.keyVaultUri.value]"
+    },
+    "detectionRulesDeployed": {
+      "type": "int",
+      "value": "[if(parameters('enableSentinelSolutions'), add(coalesce(tryGet(if(parameters('enableSentinelSolutions'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('workspaceSubscriptionId'), variables('workspaceResourceGroup')), 'Microsoft.Resources/deployments', 'deploy-detections-kql'), '2025-04-01'), null()), 'outputs', 'deployedRuleCount', 'value'), 0), 1), 0)]"
+    },
+    "detectionRulesEnabled": {
+      "type": "int",
+      "value": "[if(parameters('enableSentinelSolutions'), add(coalesce(tryGet(if(parameters('enableSentinelSolutions'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('workspaceSubscriptionId'), variables('workspaceResourceGroup')), 'Microsoft.Resources/deployments', 'deploy-detections-kql'), '2025-04-01'), null()), 'outputs', 'enabledRuleCount', 'value'), 0), 1), 0)]"
     }
   }
 }

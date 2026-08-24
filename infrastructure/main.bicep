@@ -253,8 +253,25 @@ module sentinel 'modules/aks_sentinel.bicep' = if (enableSentinelSolutions) {
 // ── Layer 3.5: Detection Content ────────────────────────────────────────────
 // Detection content also targets the workspace, so scoped to the workspace's RG.
 
+// T1098.006 keeps its own self-contained package (query + rule + attack script
+// in one folder). It is the layout the rest of the library is migrating toward.
 module detectionT1098006 '../detections/T1098.006-cluster-role-binding/rule.bicep' = if (enableSentinelSolutions) {
   name: 'deploy-detection-T1098-006'
+  scope: resourceGroup(workspaceSubscriptionId, workspaceResourceGroup)
+  params: {
+    workspaceName: resolvedWorkspaceName
+  }
+  dependsOn: [
+    sentinel
+  ]
+}
+
+// Everything under detections/kql/ — each rule paired with a metadata sidecar
+// that carries its severity, ATT&CK mapping, schedule, and entity mappings.
+// Without this module those rules were validated and fixture-tested in CI and
+// then never deployed, so nothing in Azure ever ran them.
+module detectionsKql 'modules/aks_detections.bicep' = if (enableSentinelSolutions) {
+  name: 'deploy-detections-kql'
   scope: resourceGroup(workspaceSubscriptionId, workspaceResourceGroup)
   params: {
     workspaceName: resolvedWorkspaceName
@@ -304,3 +321,12 @@ output acrLoginServer string = acr.outputs.acrLoginServer
 // Key Vault identifiers for wiring up secrets.
 output keyVaultName string = keyVault.outputs.keyVaultName
 output keyVaultUri string = keyVault.outputs.keyVaultUri
+// Detection content actually shipped, so the deploy job can report it rather
+// than leaving "did my rules deploy?" as something to check in the portal.
+// Zero when enableSentinelSolutions is false — no workspace, no analytics rules.
+// `.?` safe-dereference: the module is conditional, so its outputs are null when
+// enableSentinelSolutions is false. `?? 0` supplies the fallback without Bicep
+// warning that the access could fail. The `+ 1` accounts for the separately
+// deployed T1098.006 package.
+output detectionRulesDeployed int = enableSentinelSolutions ? (detectionsKql.?outputs.deployedRuleCount ?? 0) + 1 : 0
+output detectionRulesEnabled int = enableSentinelSolutions ? (detectionsKql.?outputs.enabledRuleCount ?? 0) + 1 : 0

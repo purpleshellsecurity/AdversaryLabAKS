@@ -79,6 +79,42 @@ param techniques array = []
 @description('Whether the rule is enabled')
 param enabled bool = true
 
+// Entity mappings promote raw query columns into first-class Sentinel entities,
+// which is what powers correlation, entity pages, and the investigation graph.
+//
+// These MUST name columns the query actually projects. They are a parameter and
+// not a fixed shape because the detections legitimately return different columns:
+// the audit-plane rules project `User` + `ClientIp`, lateral-movement projects
+// `Username`, and the ContainerLogV2 backstops project neither. Only T1098.006
+// projects the `Username` + `SourceIp` pair that used to be hardcoded here, so
+// every other rule would map columns its query never returns.
+//
+// The default preserves the original Username/SourceIp pair so existing callers
+// (detections/T1098.006-cluster-role-binding/rule.bicep) keep working unchanged.
+@description('Sentinel entity mappings — must reference columns the query projects')
+param entityMappings array = [
+  {
+    entityType: 'Account'
+    fieldMappings: [
+      { identifier: 'FullName', columnName: 'Username' }
+    ]
+  }
+  {
+    entityType: 'IP'
+    fieldMappings: [
+      { identifier: 'Address', columnName: 'SourceIp' }
+    ]
+  }
+]
+
+// How alerts are grouped into a single incident. 'AllEntities' keeps grouped
+// incidents tightly correlated, but it only makes sense when the rule HAS mapped
+// entities — a rule with none should use 'AnyAlert' instead, or its alerts will
+// not group at all.
+@description('Incident grouping strategy')
+@allowed([ 'AllEntities', 'AnyAlert', 'Selected' ])
+param groupingMatchingMethod string = 'AllEntities'
+
 // Reference the existing onboarded workspace; the rule is scoped to it.
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: workspaceName
@@ -109,26 +145,8 @@ resource analyticsRule 'Microsoft.SecurityInsights/alertRules@2023-12-01-preview
     // MITRE mapping attached to every alert/incident for kill-chain context.
     tactics: tactics
     techniques: techniques
-    // Entity mappings promote raw query columns into first-class Sentinel entities,
-    // enabling correlation, entity pages, and investigation graphs.
-    entityMappings: [
-      {
-        // Map the query's 'Username' column to an Account entity's FullName.
-        // Detection KQL should therefore project a 'Username' column.
-        entityType: 'Account'
-        fieldMappings: [
-          { identifier: 'FullName', columnName: 'Username' }
-        ]
-      }
-      {
-        // Map the query's 'SourceIp' column to an IP entity. KQL should project
-        // a 'SourceIp' column for this mapping to populate.
-        entityType: 'IP'
-        fieldMappings: [
-          { identifier: 'Address', columnName: 'SourceIp' }
-        ]
-      }
-    ]
+    // Supplied per-detection — see the entityMappings param above for why.
+    entityMappings: entityMappings
     incidentConfiguration: {
       // Auto-create a Sentinel incident on alert so triage happens in one place.
       createIncident: true
@@ -139,9 +157,9 @@ resource analyticsRule 'Microsoft.SecurityInsights/alertRules@2023-12-01-preview
         reopenClosedIncident: false
         // Alerts within a 5-hour window are eligible to be grouped together.
         lookbackDuration: 'PT5H'
-        // Group only alerts that share ALL mapped entities (same account AND IP),
-        // keeping grouped incidents tightly correlated rather than over-merged.
-        matchingMethod: 'AllEntities'
+        // Per-detection: 'AllEntities' for rules with mapped entities, 'AnyAlert'
+        // for those without (see the groupingMatchingMethod param above).
+        matchingMethod: groupingMatchingMethod
       }
     }
   }

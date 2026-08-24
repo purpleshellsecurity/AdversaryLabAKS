@@ -1,0 +1,39 @@
+{
+  "ruleName": "T1611-NodesProxyGrant",
+  "displayName": "T1611 - RBAC Grant for nodes/proxy Subresource",
+  "description": "An RBAC rule granting access to the nodes/proxy subresource was created. That subresource reaches the kubelet API directly, bypassing the API server's admission and audit controls and allowing command execution on the node (MITRE T1611).",
+  "severity": "High",
+  "tactics": [
+    "PrivilegeEscalation"
+  ],
+  "techniques": [
+    "T1611"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": true,
+  "groupingMatchingMethod": "AllEntities",
+  "entityMappings": [
+    {
+      "entityType": "Account",
+      "fieldMappings": [
+        {
+          "identifier": "FullName",
+          "columnName": "User"
+        }
+      ]
+    },
+    {
+      "entityType": "IP",
+      "fieldMappings": [
+        {
+          "identifier": "Address",
+          "columnName": "ClientIp"
+        }
+      ]
+    }
+  ],
+  "maturity": "proven-tier1"
+}

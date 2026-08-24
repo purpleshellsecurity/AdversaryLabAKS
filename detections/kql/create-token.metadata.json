@@ -1,0 +1,39 @@
+{
+  "ruleName": "T1098-ServiceAccountTokenCreation",
+  "displayName": "T1098 - ServiceAccount Token Minted via TokenRequest API",
+  "description": "A principal minted a ServiceAccount token through the TokenRequest API. This is the supported way to obtain a credential for an identity other than one's own, and is a common persistence and privilege-escalation step (MITRE T1098).",
+  "severity": "High",
+  "tactics": [
+    "Persistence"
+  ],
+  "techniques": [
+    "T1098"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": true,
+  "groupingMatchingMethod": "AllEntities",
+  "entityMappings": [
+    {
+      "entityType": "Account",
+      "fieldMappings": [
+        {
+          "identifier": "FullName",
+          "columnName": "User"
+        }
+      ]
+    },
+    {
+      "entityType": "IP",
+      "fieldMappings": [
+        {
+          "identifier": "Address",
+          "columnName": "ClientIp"
+        }
+      ]
+    }
+  ],
+  "maturity": "proven-tier1"
+}

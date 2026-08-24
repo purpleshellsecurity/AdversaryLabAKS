@@ -93,6 +93,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Validate name prefix
         run: |
@@ -207,6 +209,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Azure login
         uses: azure/login@v2
@@ -281,6 +285,8 @@ jobs:
           echo "workspace_is_new=$(echo $OUTPUT | jq -r '.workspaceIsNew.value')"     >> $GITHUB_OUTPUT
           echo "acr_server=$(echo $OUTPUT      | jq -r '.acrLoginServer.value')"      >> $GITHUB_OUTPUT
           echo "keyvault_name=$(echo $OUTPUT   | jq -r '.keyVaultName.value')"        >> $GITHUB_OUTPUT
+          echo "detections_deployed=$(echo $OUTPUT | jq -r '.detectionRulesDeployed.value')" >> $GITHUB_OUTPUT
+          echo "detections_enabled=$(echo $OUTPUT  | jq -r '.detectionRulesEnabled.value')"  >> $GITHUB_OUTPUT
 
           echo "✓ Main stack deployed"
 
@@ -362,7 +368,13 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
+      # Falco IS the runtime detection plane. `continue-on-error` keeps a slow
+      # install from aborting a 20-minute deploy, but — unlike a swallowed exit
+      # code — it marks the step failed so the outcome stays visible. The step
+      # below turns that into a loud warning and a job-summary line.
       - name: Deploy Falco
+        id: falco
+        continue-on-error: true
         run: |
           helm repo add falcosecurity https://falcosecurity.github.io/charts
           helm dependency update helm/falco
@@ -370,17 +382,41 @@ jobs:
             --namespace monitoring \
             --create-namespace \
             --wait \
-            --timeout 10m \
-            || echo "⚠️  Falco install timed out — check 'kubectl get pods -n monitoring' after deploy"
-          echo "✓ Falco deployment step complete"
+            --timeout 10m
+          echo "✓ Falco deployed and ready"
+
+      - name: Flag degraded runtime detection
+        if: steps.falco.outcome == 'failure'
+        run: |
+          echo "::warning::Falco did not become ready — RUNTIME DETECTION IS DOWN."
+          echo "Attack simulations will not produce Falco alerts until this is fixed."
+          {
+            echo "### ⚠️ Falco unhealthy — runtime detection degraded"
+            echo ""
+            echo "The Helm install did not converge. Falco rules will NOT fire."
+            echo ""
+            echo '```'
+            echo "kubectl get pods -n monitoring"
+            echo "kubectl logs -n monitoring -l app.kubernetes.io/name=falco --tail=50"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Apply monitoring resources
         run: kubectl apply -f kubernetes/monitoring/
 
       - name: Deploy victim applications
+        id: victim
+        continue-on-error: true
         run: |
           kubectl apply -f kubernetes/victim-apps/
-          kubectl rollout status deployment -n victim --timeout=3m || true
+          kubectl rollout status deployment -n victim --timeout=3m
+
+      - name: Flag victim apps not ready
+        if: steps.victim.outcome == 'failure'
+        run: |
+          echo "::warning::Victim workloads did not reach Ready — attack targets may be missing."
+          kubectl get pods -n victim || true
+          echo "### ⚠️ Victim apps not ready — some attack targets unavailable" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Deploy red team resources
         run: kubectl apply -f kubernetes/red-team/
@@ -396,6 +432,7 @@ jobs:
           echo "  ACR       : ${{ steps.bicep.outputs.acr_server }}"
           echo "  Key Vault : ${{ steps.bicep.outputs.keyvault_name }}"
           echo "  Workspace : ${{ steps.bicep.outputs.workspace_name }}"
+          echo "  Detections: ${{ steps.bicep.outputs.detections_enabled }} enabled of ${{ steps.bicep.outputs.detections_deployed }} deployed Sentinel analytics rules"
           if [ "${{ steps.bicep.outputs.workspace_is_new }}" = "true" ]; then
             echo "             (newly created)"
           else
@@ -416,11 +453,20 @@ jobs:
         if: always() && steps.runner_ip.outputs.ip != ''
         run: |
           ORIGINAL_RANGES="${{ github.event.inputs.authorized_ip }}"
-          az aks update \
+
+          # NO `|| echo` here, deliberately. This closes the runner's temporary
+          # window into the API server. If it fails and the run still went green,
+          # that access would stay open with nobody watching the logs for it — so
+          # a failure to restore a security control fails the run.
+          if ! az aks update \
             --resource-group "${{ env.RESOURCE_GROUP }}" \
             --name "${{ steps.bicep.outputs.cluster_name }}" \
-            --api-server-authorized-ip-ranges "$ORIGINAL_RANGES" \
-            || echo "⚠️  Failed to restore allowlist — may need manual cleanup"
+            --api-server-authorized-ip-ranges "$ORIGINAL_RANGES"; then
+            echo "::error::FAILED to remove the runner IP from the AKS allowlist."
+            echo "::error::Runner ${{ steps.runner_ip.outputs.ip }}/32 may still have API server access — remove it manually:"
+            echo "::error::  az aks update -g ${{ env.RESOURCE_GROUP }} -n ${{ steps.bicep.outputs.cluster_name }} --api-server-authorized-ip-ranges $ORIGINAL_RANGES"
+            exit 1
+          fi
           echo "✓ Allowlist restored to original ($ORIGINAL_RANGES)"
 
   # ── Job 3 of 3: destroy ────────────────────────────────────────────────────
@@ -438,6 +484,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Azure login
         uses: azure/login@v2
