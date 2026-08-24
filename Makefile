@@ -33,6 +33,11 @@ PYTHON_TEST ?= $(shell command -v python3.13 2>/dev/null || command -v python3.1
 KUSTO_IMAGE := mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
 K8S_VERSION := 1.34.0
 
+# The Kustomize overlays. `platform` and `workloads` are applied either side of
+# the Falco install so the detector is watching before the attack surface exists;
+# `detection-only` is the variant without red-team tooling.
+OVERLAYS := platform workloads detection-only
+
 # STRICT=1 turns "tool missing, check skipped" into a hard failure. Local runs
 # default to lenient so a contributor without every tool can still work; CI sets
 # STRICT=1 because it installs them all, so a skip there means something broke.
@@ -109,14 +114,36 @@ arm-build:  ## Regenerate infrastructure/main.json from main.bicep
 k8s:  ## Schema-validate all Kubernetes manifests
 	@# One shell block, not two: each recipe LINE gets its own shell, so an
 	@# `exit 0` in a guard on its own line would not stop the next line running.
+	@# Validate what actually gets APPLIED — the rendered overlays — rather than
+	@# the raw source files. Rendering is where a broken kustomization, a bad
+	@# resource path, or a label transformer that rewrote an immutable selector
+	@# would show up, and none of that is visible in the source YAML.
 	@if command -v kubeconform >/dev/null 2>&1; then \
-		kubeconform -strict -ignore-missing-schemas \
-			-kubernetes-version $(K8S_VERSION) -summary kubernetes/; \
+		for o in $(OVERLAYS); do \
+			echo "  overlay: $$o"; \
+			kubectl kustomize kubernetes/overlays/$$o \
+				| kubeconform -strict -ignore-missing-schemas \
+					-kubernetes-version $(K8S_VERSION) -summary || exit 1; \
+		done; \
 	elif [ "$(STRICT)" = "1" ]; then \
 		echo "kubeconform missing and STRICT=1"; exit 1; \
 	else \
 		echo "  (skipped — brew install kubeconform to enable)"; \
+		for o in $(OVERLAYS); do \
+			kubectl kustomize kubernetes/overlays/$$o > /dev/null || exit 1; \
+		done; \
+		echo "  (overlays still rendered successfully)"; \
 	fi
+
+.PHONY: render
+render:  ## Render an overlay to stdout (OVERLAY=platform|workloads|detection-only)
+	@test -n "$(OVERLAY)" || { echo "usage: make render OVERLAY=platform"; exit 1; }
+	@kubectl kustomize kubernetes/overlays/$(OVERLAY)
+
+.PHONY: diff
+diff:  ## Show what applying an overlay would change on the live cluster
+	@test -n "$(OVERLAY)" || { echo "usage: make diff OVERLAY=platform"; exit 1; }
+	@kubectl diff -k kubernetes/overlays/$(OVERLAY) || true
 
 .PHONY: bicep
 bicep:  ## Compile all Bicep (syntax + linter warnings)

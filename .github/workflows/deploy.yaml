@@ -428,22 +428,22 @@ jobs:
           kubectl cluster-info
           echo "✓ kubectl configured"
 
-      # ── K8s layers applied in dependency order ──────────────────────────────
-      # namespaces → rbac → network-policies → Falco → monitoring → victim → red
-      # team. Order matters: namespaces must exist before things go in them; RBAC
-      # and network policy should exist before workloads; and Falco (the runtime
-      # detector) should be watching BEFORE the victim/attacker workloads start.
-      - name: Apply namespaces
+      # ── K8s layers, applied as two Kustomize overlays ───────────────────────
+      # platform → Falco → workloads. The split exists because Falco (the runtime
+      # detector) must be watching BEFORE the victim and attacker workloads start,
+      # otherwise the first minutes of the attack surface are unobserved.
+      #
+      # Within an overlay ordering is automatic: kubectl applies Namespaces and
+      # RBAC ahead of the objects that depend on them, so the previous
+      # namespaces → rbac → netpol → monitoring sequence collapses into one apply.
+      #
+      # Every object carries app.kubernetes.io/part-of=adversary-lab, which is
+      # what a future `--prune` would select on.
+      - name: Apply platform layer (namespaces, RBAC, network policies, monitoring)
         run: |
-          kubectl apply -f kubernetes/namespaces/
-          kubectl get namespaces
-          echo "✓ Namespaces created"
-
-      - name: Apply RBAC
-        run: kubectl apply -f kubernetes/rbac/
-
-      - name: Apply network policies
-        run: kubectl apply -f kubernetes/network-policies/
+          kubectl apply -k kubernetes/overlays/platform
+          kubectl get namespaces -l app.kubernetes.io/part-of=adversary-lab
+          echo "✓ Platform layer applied"
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -481,14 +481,11 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Apply monitoring resources
-        run: kubectl apply -f kubernetes/monitoring/
-
-      - name: Deploy victim applications
+      - name: Deploy workloads (victim apps + red-team tooling)
         id: victim
         continue-on-error: true
         run: |
-          kubectl apply -f kubernetes/victim-apps/
+          kubectl apply -k kubernetes/overlays/workloads
           kubectl rollout status deployment -n victim --timeout=3m
 
       - name: Flag victim apps not ready
@@ -497,9 +494,6 @@ jobs:
           echo "::warning::Victim workloads did not reach Ready — attack targets may be missing."
           kubectl get pods -n victim || true
           echo "### ⚠️ Victim apps not ready — some attack targets unavailable" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Deploy red team resources
-        run: kubectl apply -f kubernetes/red-team/
 
       - name: Deployment summary
         run: |

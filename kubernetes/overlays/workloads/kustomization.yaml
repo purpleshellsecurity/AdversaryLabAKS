@@ -1,0 +1,19 @@
+# =============================================================================
+# Overlay: workloads — the attack surface, applied AFTER Falco is watching
+# =============================================================================
+# Victim apps and red-team tooling. Everything here generates the activity the
+# detections are supposed to catch, which is why it goes last. See the platform
+# overlay for the ordering rationale.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../victim-apps
+  - ../../red-team
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: adversary-lab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

@@ -1,0 +1,35 @@
+# =============================================================================
+# Overlay: platform — everything that must exist BEFORE Falco starts watching
+# =============================================================================
+# The split between this overlay and `workloads` is not cosmetic. deploy.yaml
+# deliberately installs Falco AFTER namespaces/RBAC/network policy but BEFORE
+# the victim and attacker workloads, so the runtime detector is already watching
+# when there is finally something to detect. A single `kubectl apply -k` over
+# everything would start the attack surface before the sensor.
+#
+#   apply -k overlays/platform   →   helm install falco   →   apply -k overlays/workloads
+#
+# Within an overlay, ordering is handled for us: kubectl applies Namespaces and
+# RBAC before the objects that depend on them.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../namespaces
+  - ../../rbac
+  - ../../network-policies
+  - ../../monitoring
+
+# One label on every object this repo owns. This is what makes pruning possible
+# later — `kubectl apply --prune -l app.kubernetes.io/part-of=adversary-lab`
+# can then delete cluster objects whose manifests were removed from git.
+#
+# `labels` rather than the deprecated `commonLabels`, and includeSelectors is
+# deliberately FALSE: rewriting selectors would change the identity of existing
+# Deployments (spec.selector is immutable) and break the apply.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: adversary-lab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

@@ -248,18 +248,40 @@ Connect-AzAccount
 After the script completes, apply K8s resources manually:
 
 ```bash
-kubectl apply -f kubernetes/namespaces/
-kubectl apply -f kubernetes/rbac/
-kubectl apply -f kubernetes/network-policies/
-kubectl apply -f kubernetes/monitoring/
-kubectl apply -f kubernetes/victim-apps/
-kubectl apply -f kubernetes/red-team/
+# 1. Platform layer — namespaces, RBAC, network policies, monitoring config.
+kubectl apply -k kubernetes/overlays/platform
 
+# 2. Falco BEFORE the workloads, so the runtime detector is already watching
+#    when the attack surface appears.
 helm repo add falcosecurity https://falcosecurity.github.io/charts
 helm dependency update helm/falco
 helm upgrade --install falco helm/falco \
   --namespace monitoring \
   --create-namespace
+
+# 3. Workloads — victim apps and red-team tooling.
+kubectl apply -k kubernetes/overlays/workloads
+```
+
+### Kustomize overlays
+
+| Overlay | Contains | Use |
+|---|---|---|
+| `platform` | namespaces, RBAC, network policies, monitoring config | Applied **before** Falco |
+| `workloads` | victim apps, red-team tooling | Applied **after** Falco |
+| `detection-only` | platform + victim apps, **no red-team pods** | The variant safe to leave running |
+
+The split is not cosmetic: applying everything at once would start the attack
+surface before the sensor. Within an overlay, ordering is automatic — kubectl
+applies Namespaces and RBAC ahead of the objects that depend on them.
+
+Every object carries `app.kubernetes.io/part-of=adversary-lab`, which is the
+selector a future `kubectl apply --prune` would use.
+
+```bash
+make render OVERLAY=platform     # render to stdout
+make diff   OVERLAY=platform     # what would change on the live cluster
+make k8s                         # schema-validate all three rendered overlays
 ```
 
 > **Falco is a pinned chart dependency.** The version lives declaratively in
