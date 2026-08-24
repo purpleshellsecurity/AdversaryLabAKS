@@ -153,6 +153,21 @@ jobs:
 
           echo "✓ IP range valid (public): $IP"
 
+      # admin_group_id decides who can administer the cluster, so a wrong value is
+      # expensive: it is well-formed, the deploy succeeds, and you only discover
+      # it ~20 minutes later when kubectl returns "User does not have access to
+      # the resource in Azure". Shape is checked here; the group itself is
+      # verified after login, below.
+      - name: Validate admin group ID format
+        run: |
+          GID="${{ github.event.inputs.admin_group_id }}"
+          if [[ ! "$GID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo "::error::admin_group_id must be a GUID (the group's OBJECT ID, not its name). Got: $GID"
+            echo "::error::Find it with: az ad group show --group '<name>' --query id -o tsv"
+            exit 1
+          fi
+          echo "✓ Admin group ID is a well-formed GUID"
+
       # Only runs IF you supplied an existing workspace. Regex-checks it's a valid
       # Log Analytics resource ID. nocasematch handles Azure's inconsistent casing
       # (resourceGroups vs resourcegroups).
@@ -184,6 +199,58 @@ jobs:
         run: |
           az account show --query "{subscription:name, id:id, tenant:tenantId}" -o table
           echo "✓ Azure login successful"
+
+      # Best-effort identity check. Prints the group's NAME and member count so a
+      # plausible-but-wrong group is obvious BEFORE the cluster is built --
+      # "AKS-AdversaryLab-Admins, 1 member" reads very differently from
+      # "aks-admins, 2 members" when you expected two admins.
+      #
+      # Degrades gracefully: the OIDC service principal holds Azure RBAC roles,
+      # not necessarily Microsoft Graph directory permissions, so it may not be
+      # able to read the directory at all. That is a warning, not a failure --
+      # we refuse to block a deploy over a check we were not granted the rights
+      # to perform. An empty group IS fatal: it yields a cluster no human can
+      # administer, which is never what anyone wanted.
+      - name: Verify admin group exists and has members
+        run: |
+          GID="${{ github.event.inputs.admin_group_id }}"
+
+          if ! GROUP_JSON=$(az ad group show --group "$GID" -o json 2>&1); then
+            if echo "$GROUP_JSON" | grep -qiE "Authorization_RequestDenied|Insufficient privileges|forbidden"; then
+              echo "::warning::Cannot read the directory to verify the admin group — skipping."
+              echo "::warning::Grant the deploy identity Microsoft Graph Group.Read.All to enable this check."
+              exit 0
+            fi
+            echo "::error::Admin group $GID not found in this tenant."
+            echo "::error::Pass the group's OBJECT ID. List candidates with: az ad group list -o table"
+            exit 1
+          fi
+
+          NAME=$(echo "$GROUP_JSON" | jq -r '.displayName')
+
+          if ! MEMBERS=$(az ad group member list --group "$GID" --query "length(@)" -o tsv 2>&1); then
+            echo "::warning::Found group '$NAME' but could not list its members."
+            exit 0
+          fi
+
+          echo "Admin group : $NAME"
+          echo "Members     : $MEMBERS"
+
+          if [ "$MEMBERS" -eq 0 ]; then
+            echo "::error::Group '$NAME' has no members — nobody could administer this cluster."
+            exit 1
+          fi
+
+          az ad group member list --group "$GID" \
+            --query "[].{name:displayName, upn:userPrincipalName}" -o table || true
+
+          {
+            echo "### Cluster admin group"
+            echo ""
+            echo "**$NAME** — $MEMBERS member(s). Confirm this is the group you meant."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "✓ Admin group verified: $NAME ($MEMBERS member(s))"
 
       - name: Verify existing workspace exists
         if: github.event.inputs.existing_workspace_id != ''
