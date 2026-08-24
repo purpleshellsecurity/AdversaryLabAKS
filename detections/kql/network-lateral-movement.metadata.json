@@ -1,0 +1,30 @@
+{
+  "ruleName": "T1046-EastWestFlowAnomaly",
+  "displayName": "T1046 - Unexpected East-West Pod-to-Pod Flow",
+  "description": "Cross-namespace pod-to-pod network flows that fall outside the baseline, consistent with in-cluster service discovery or pivoting (MITRE T1046).",
+  "severity": "Medium",
+  "tactics": [
+    "Discovery"
+  ],
+  "techniques": [
+    "T1046"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": false,
+  "groupingMatchingMethod": "AnyAlert",
+  "entityMappings": [
+    {
+      "entityType": "Host",
+      "fieldMappings": [
+        {
+          "identifier": "HostName",
+          "columnName": "SourcePod"
+        }
+      ]
+    }
+  ],
+  "maturity": "template"
+}

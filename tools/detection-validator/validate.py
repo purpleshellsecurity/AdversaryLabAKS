@@ -260,6 +260,23 @@ def validate_falco_file(path: Path) -> ValidationResult:
             errors.append(f"Rule {i}: expected a mapping, got {type(rule).__name__}")
             continue
 
+        # Falco rule files legitimately contain `list:` and `macro:` entries
+        # alongside rules. They are reusable fragments referenced from a rule's
+        # condition (e.g. an allowlist of platform images), NOT detections, so
+        # the rule-shaped checks below do not apply. Validate their own required
+        # key and move on — treating them as malformed rules produced four
+        # spurious errors per list and blocked a legitimate tuning change.
+        if "list" in rule:
+            if "items" not in rule:
+                errors.append(f"List '{rule['list']}': missing required field 'items'")
+            elif not isinstance(rule["items"], list):
+                errors.append(f"List '{rule['list']}': 'items' must be a list")
+            continue
+        if "macro" in rule:
+            if "condition" not in rule:
+                errors.append(f"Macro '{rule['macro']}': missing required field 'condition'")
+            continue
+
         # Prefer the rule's own name in messages; fall back to a positional label.
         rule_name = rule.get("rule", f"<unnamed rule {i}>")
 

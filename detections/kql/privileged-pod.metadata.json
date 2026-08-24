@@ -1,0 +1,40 @@
+{
+  "ruleName": "T1610-PrivilegedPodCreation",
+  "displayName": "T1610 - Privileged Pod Created by Non-System Principal",
+  "description": "A pod was created with securityContext.privileged=true by a principal outside the AKS system controller set. A privileged container holds all capabilities and effectively unrestricted host access \u2014 the most direct route to node compromise (MITRE T1610).",
+  "severity": "High",
+  "tactics": [
+    "Execution",
+    "DefenseEvasion"
+  ],
+  "techniques": [
+    "T1610"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": true,
+  "groupingMatchingMethod": "AllEntities",
+  "entityMappings": [
+    {
+      "entityType": "Account",
+      "fieldMappings": [
+        {
+          "identifier": "FullName",
+          "columnName": "User"
+        }
+      ]
+    },
+    {
+      "entityType": "IP",
+      "fieldMappings": [
+        {
+          "identifier": "Address",
+          "columnName": "ClientIp"
+        }
+      ]
+    }
+  ],
+  "maturity": "proven-tier1"
+}

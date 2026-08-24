@@ -1,0 +1,8 @@
+# Kustomization root for red-team/ — referenced by the overlays.
+# Kustomize only accepts an out-of-root resource when it is a directory
+# that is itself a kustomization root, so each manifest dir needs this file.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - red-team-tools.yaml

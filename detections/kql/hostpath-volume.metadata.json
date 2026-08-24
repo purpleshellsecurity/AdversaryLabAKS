@@ -1,0 +1,39 @@
+{
+  "ruleName": "T1611-HostPathVolumeMount",
+  "displayName": "T1611 - Pod Mounted a Sensitive hostPath Volume",
+  "description": "A pod was created mounting a hostPath volume that exposes the node filesystem. Mounting paths such as / or /var/run/docker.sock lets a container read or modify host state and escape its isolation boundary (MITRE T1611).",
+  "severity": "High",
+  "tactics": [
+    "PrivilegeEscalation"
+  ],
+  "techniques": [
+    "T1611"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": true,
+  "groupingMatchingMethod": "AllEntities",
+  "entityMappings": [
+    {
+      "entityType": "Account",
+      "fieldMappings": [
+        {
+          "identifier": "FullName",
+          "columnName": "User"
+        }
+      ]
+    },
+    {
+      "entityType": "IP",
+      "fieldMappings": [
+        {
+          "identifier": "Address",
+          "columnName": "ClientIp"
+        }
+      ]
+    }
+  ],
+  "maturity": "proven-tier1"
+}

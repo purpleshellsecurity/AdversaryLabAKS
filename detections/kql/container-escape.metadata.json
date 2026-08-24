@@ -1,0 +1,30 @@
+{
+  "ruleName": "T1611-ContainerEscapeIndicators",
+  "displayName": "T1611 - Container Escape Indicators in Container Logs",
+  "description": "Container stdout/stderr matched strings associated with escape tooling and techniques (nsenter, release_agent, core_pattern). BACKSTOP rule: log-string matching is evadable and sits behind the Falco syscall rule for the same technique (MITRE T1611).",
+  "severity": "Medium",
+  "tactics": [
+    "PrivilegeEscalation"
+  ],
+  "techniques": [
+    "T1611"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": true,
+  "groupingMatchingMethod": "AnyAlert",
+  "entityMappings": [
+    {
+      "entityType": "Host",
+      "fieldMappings": [
+        {
+          "identifier": "HostName",
+          "columnName": "PodName"
+        }
+      ]
+    }
+  ],
+  "maturity": "backstop"
+}

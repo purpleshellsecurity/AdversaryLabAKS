@@ -18,10 +18,15 @@
   desc: Detects an interactive shell started inside a container — a webshell when the parent is the app process (MITRE T1059)
   # condition matches a new in-container process whose name is one of the shells in
   # the Falco-maintained `shell_binaries` list (bash, sh, zsh, ash, ...).
+  # TUNING: measured at ~33,000 alerts/day untuned — 344 of 345 samples in 15
+  # minutes were the Container Insights collectors shelling out on a timer
+  # (260 from prometheus-collector, 84 from ama-logs). The one remaining hit was
+  # a real `kubectl exec` into an attacker pod. See _shared-lists.yaml.
   condition: >
     spawned_process and
     container and
-    proc.name in (shell_binaries)
+    proc.name in (shell_binaries) and
+    not platform_agent_activity
   # output includes the PARENT process (%proc.pname) — the webshell tell — plus the
   # usual container/pod/namespace/image context.
   output: >

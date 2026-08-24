@@ -47,6 +47,7 @@ aks-adversary-lab/
 │   │   ├── aks_acr_role.bicep
 │   │   ├── aks_keyvault.bicep
 │   │   ├── aks_sentinel.bicep
+│   │   ├── aks_detections.bicep   # Deploys detections/kql/ as Sentinel analytics rules
 │   │   ├── aks_policy_defs.bicep  # Subscription-scope policy definitions + initiative
 │   │   └── aks_policy.bicep       # Policy assignment at resource group scope
 │   ├── main.bicep                 # Resource group orchestrator
@@ -62,11 +63,11 @@ aks-adversary-lab/
 │   └── victim-apps/
 │
 ├── helm/
-│   └── falco/                     # Umbrella chart: pins Falco (Chart.yaml) + values.yaml
+│   └── falco/                     # Umbrella chart: pins Falco (Chart.yaml) + generated values.yaml
 │
 ├── detections/                    # Source of truth for all detection content
-│   ├── kql/                       # Microsoft Sentinel analytics rules
-│   └── falco/                     # Falco runtime rules (assembled into helm/falco/values.yaml)
+│   ├── kql/                       # Sentinel rules — .kql + .metadata.json pairs
+│   └── falco/                     # Falco runtime rules — SOURCE (generated into helm/falco/values.yaml)
 │
 ├── attack-simulations/            # Red team scripts mapped to MITRE ATT&CK
 │   ├── token-theft.sh             # T1528
@@ -74,6 +75,9 @@ aks-adversary-lab/
 │
 ├── tools/
 │   ├── setup-oidc.ps1             # One-time OIDC setup for GitHub Actions
+│   ├── build-falco-rules.py       # Generates helm/falco/values.yaml from detections/falco/
+│   ├── check-detection-wiring.py  # Asserts every detection is wired to a deployment
+│   ├── check-arm-parity.py       # Asserts main.json matches main.bicep
 │   └── detection-validator/       # Python tool — validates KQL + Falco rule structure
 │
 └── docs/
@@ -81,6 +85,33 @@ aks-adversary-lab/
     ├── security-exceptions.yaml   # Accepted risk register with justification + expiration
     └── KQL_Container_Reference.md
 ```
+
+---
+
+## Local Development
+
+Every check CI runs, runnable locally in seconds — no cluster, no cloud, no Docker:
+
+```bash
+make            # list all targets
+make check      # every offline check (~2s)
+make test       # adds the Kusto emulator (needs Docker)
+make hooks      # install pre-commit hooks
+```
+
+CI calls the same `make` targets, so the two cannot drift. The one difference is
+`STRICT=1`: locally a missing tool **skips** its check and says so loudly at the
+end; in CI a skip is a failure, because CI installs everything.
+
+Two targets regenerate derived files — run them after editing the source:
+
+| If you edit | Run |
+|---|---|
+| `detections/falco/*.yaml` | `make falco-build` |
+| `infrastructure/*.bicep` | `make arm-build` |
+
+The pre-commit hooks catch both automatically. Skipping one silently would leave
+the cluster running old logic while git history claimed otherwise.
 
 ---
 
@@ -94,12 +125,13 @@ Every pull request and push to `main` runs `validate.yaml` automatically. The de
 
 | Job | Tool | What it checks |
 |---|---|---|
-| `bicep-validate` | `az bicep build` | Syntax + linting on all Bicep files |
+| `bicep-validate` | `az bicep build` | Syntax + linting on all Bicep files (current Bicep) |
+| `arm-parity` | check-arm-parity.py | `infrastructure/main.json` still matches `main.bicep` (pinned Bicep) |
 | `powershell-lint` | PSScriptAnalyzer | PowerShell script quality |
 | `secret-scan` | TruffleHog | Verified secrets in commit history |
 | `k8s-validate` | kubeconform | Kubernetes manifest schema validation |
-| `helm-lint` | Helm | Falco values validity |
-| `detection-validate` | validate.py | KQL + Falco rule structure |
+| `helm-lint` | Helm + build-falco-rules.py | Falco rule source/deploy parity, then chart renders with rules present |
+| `detection-validate` | validate.py + check-detection-wiring.py | KQL + Falco rule structure, then that every rule is wired to a deployment |
 | `python-sast` | Bandit | Python tooling security scan |
 | `iac-scan` | Checkov | Bicep IaC security scan (soft fail) |
 | `trivy-scan` | Trivy | Container CVE scan — Juice Shop image |
@@ -216,18 +248,40 @@ Connect-AzAccount
 After the script completes, apply K8s resources manually:
 
 ```bash
-kubectl apply -f kubernetes/namespaces/
-kubectl apply -f kubernetes/rbac/
-kubectl apply -f kubernetes/network-policies/
-kubectl apply -f kubernetes/monitoring/
-kubectl apply -f kubernetes/victim-apps/
-kubectl apply -f kubernetes/red-team/
+# 1. Platform layer — namespaces, RBAC, network policies, monitoring config.
+kubectl apply -k kubernetes/overlays/platform
 
+# 2. Falco BEFORE the workloads, so the runtime detector is already watching
+#    when the attack surface appears.
 helm repo add falcosecurity https://falcosecurity.github.io/charts
 helm dependency update helm/falco
 helm upgrade --install falco helm/falco \
   --namespace monitoring \
   --create-namespace
+
+# 3. Workloads — victim apps and red-team tooling.
+kubectl apply -k kubernetes/overlays/workloads
+```
+
+### Kustomize overlays
+
+| Overlay | Contains | Use |
+|---|---|---|
+| `platform` | namespaces, RBAC, network policies, monitoring config | Applied **before** Falco |
+| `workloads` | victim apps, red-team tooling | Applied **after** Falco |
+| `detection-only` | platform + victim apps, **no red-team pods** | The variant safe to leave running |
+
+The split is not cosmetic: applying everything at once would start the attack
+surface before the sensor. Within an overlay, ordering is automatic — kubectl
+applies Namespaces and RBAC ahead of the objects that depend on them.
+
+Every object carries `app.kubernetes.io/part-of=adversary-lab`, which is the
+selector a future `kubectl apply --prune` would use.
+
+```bash
+make render OVERLAY=platform     # render to stdout
+make diff   OVERLAY=platform     # what would change on the live cluster
+make k8s                         # schema-validate all three rendered overlays
 ```
 
 > **Falco is a pinned chart dependency.** The version lives declaratively in
@@ -303,12 +357,20 @@ Approximate monthly cost running 24/7:
 
 | Resource | Cost |
 |---|---|
-| AKS Standard tier (control plane) | ~$73 |
+| AKS control plane (**Free** tier — default) | $0 |
 | 1× D2s_v3 system node | ~$70 |
 | 1× D2s_v3 user node | ~$70 |
 | Log Analytics (~5 GB/day, 90-day retention) | ~$35 |
 | ACR Standard | ~$5 |
-| **Total** | **~$253/month** |
+| **Total** | **~$180/month** |
+
+The control plane defaults to the **Free** tier: no cluster-management charge, up
+to 1,000 nodes, every current AKS feature. Standard costs ~$73/month and adds only
+a financially-backed API-server uptime SLA — which a lab that is stopped between
+sessions has no use for. Deploy with `clusterTier=Standard` if you want it.
+
+> Switching tier on an existing cluster requires it to be **Running**:
+> `az aks update -g <rg> -n <cluster> --tier free`
 
 For engagements or training sessions, deploy for the session and destroy when done — cost is negligible at a few hours.
 
@@ -326,10 +388,75 @@ Detection rules in `detections/` are the source of truth — version controlled,
 
 | Location | Format | Purpose |
 |---|---|---|
-| `detections/kql/` | `.kql` | Microsoft Sentinel analytics rules |
+| `detections/kql/` | `.kql` + `.metadata.json` | Microsoft Sentinel analytics rules |
 | `detections/falco/` | `.yaml` | Falco runtime rules |
 
-Falco rules are assembled from `detections/falco/` into `helm/falco/values.yaml` for deployment. The standalone files exist for validation, diffing, and easier review.
+### Detections are deployed, not just stored
+
+Every rule under `detections/kql/` ships as a live Sentinel **scheduled analytics
+rule**. Each is a pair of files:
+
+| File | Holds |
+|---|---|
+| `<name>.kql` | the detection logic |
+| `<name>.metadata.json` | severity, ATT&CK mapping, schedule, entity mappings, and whether it deploys |
+
+`infrastructure/modules/aks_detections.bicep` reads both at compile time
+(`loadTextContent` / `loadJsonContent`) and deploys one rule per detection, so a
+deployed rule can never drift from the reviewed query.
+
+Two flags in the metadata make the exceptions explicit rather than accidental:
+
+- **`deploy: false`** — the rule is not deployed at all. Currently only
+  `network-lateral-movement`, whose query reads a placeholder table for the
+  Container Network Logs plane this lab does not enable; a deployed rule would
+  error on every run.
+- **`enabled: false`** — the rule deploys but does not alert. Currently only
+  `lateral-movement`, rated Draft in the coverage matrix: its false-positive
+  allowlist is untested and it would generate incidents that teach an analyst to
+  ignore it. Enable after baselining.
+
+Bicep cannot discover files (`loadTextContent` needs a compile-time constant
+path), so adding a detection means adding an entry to `aks_detections.bicep`.
+`tools/check-detection-wiring.py` runs in CI to make sure that step is never
+forgotten — it also verifies entity mappings name columns the query actually
+projects, and that ATT&CK techniques carry no sub-technique suffix (Sentinel
+rejects those).
+
+```bash
+python tools/check-detection-wiring.py   # what CI runs
+```
+
+Falco rules are **generated** from `detections/falco/` into `helm/falco/values.yaml`
+by `tools/build-falco-rules.py`. `detections/falco/*.yaml` is the only place a rule
+is authored; the Helm value is a build artifact.
+
+```bash
+python tools/build-falco-rules.py           # regenerate after editing a rule
+python tools/build-falco-rules.py --check   # verify parity (what CI runs)
+```
+
+`infrastructure/main.json` is generated the same way — it is the compiled ARM
+output of `main.bicep`, and `tools/check-arm-parity.py` keeps the two in step:
+
+```bash
+python tools/check-arm-parity.py            # verify (what CI runs)
+python tools/check-arm-parity.py --write    # recompile after editing main.bicep
+```
+
+The Bicep version is pinned in `infrastructure/.bicep-version`, because different
+Bicep versions emit different JSON for identical source. A version mismatch exits
+2 (*cannot verify*) rather than 1 (*stale*), so a compiler upgrade never
+masquerades as drift. Bump the pin and re-run `--write` together.
+
+> Nothing currently consumes `main.json` — `deploy.yaml` deploys from `main.bicep`.
+> If you don't need the committed ARM artifact, deleting it and gitignoring it is
+> simpler than maintaining the check.
+
+Only `values.yaml` is ever deployed — Helm never reads `detections/falco/`. So a rule
+tuned in the source file but not regenerated would leave the cluster running the old
+logic while every downstream artifact claimed otherwise. CI (`helm-lint`) compares the
+two field-by-field and fails the build on any drift, naming the rule and the field.
 
 Every detection is mapped to a MITRE technique and a trigger script in the
 [detection coverage matrix](docs/DETECTION-COVERAGE.md) (with a color-coded

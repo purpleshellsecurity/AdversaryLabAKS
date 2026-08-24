@@ -1,0 +1,30 @@
+{
+  "ruleName": "T1496-CryptoMiningIndicators",
+  "displayName": "T1496 - Crypto Mining Indicators in Container Logs",
+  "description": "Container stdout/stderr matched miner binary names, mining-pool protocol strings, or known pool hostnames. BACKSTOP rule: signature matching misses renamed or novel miners and sits behind the Falco process rule for the same technique (MITRE T1496).",
+  "severity": "Medium",
+  "tactics": [
+    "Impact"
+  ],
+  "techniques": [
+    "T1496"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": true,
+  "deploy": true,
+  "groupingMatchingMethod": "AnyAlert",
+  "entityMappings": [
+    {
+      "entityType": "Host",
+      "fieldMappings": [
+        {
+          "identifier": "HostName",
+          "columnName": "PodName"
+        }
+      ]
+    }
+  ],
+  "maturity": "backstop"
+}

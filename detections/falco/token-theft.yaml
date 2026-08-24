@@ -15,15 +15,24 @@
 # NOTE: condition/output are `>` block scalars — their indented lines are literal
 # rule text, so all commentary lives on full lines between the mapping keys.
 
+# TUNING: measured at ~174,000 alerts/day on an idle AKS cluster, of which
+# exactly ONE was a real attack. The exclusion below suppresses the AKS platform
+# agents responsible; see detections/falco/_shared-lists.yaml for the full
+# measurement, the images, and why this allowlists IMAGES rather than excluding
+# the kube-system namespace.
+
 - rule: Read ServiceAccount Token in Container
   desc: Detects processes reading the mounted SA token inside a container (MITRE T1528)
   # condition matches a file opened for reading (open_read) inside a container when
   # the path is the mounted SA `token` or its `ca.crt` — the projected SA secret.
+  # The final clause suppresses the AKS platform agents enumerated above; see the
+  # TUNING block for the measurement that motivated it.
   condition: >
     open_read and
     container and
     (fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/token" or
-     fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+     fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt") and
+    not platform_agent_activity
   # output names the reader (%proc.cmdline), the file, and the container context.
   output: >
     SA token read inside container

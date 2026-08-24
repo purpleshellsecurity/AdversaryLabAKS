@@ -27,6 +27,20 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Python — keeps tools/detection-tester dependencies current (requests, which
+  # talks to the Kusto engine in the Tier 1 logic test)
+  - package-ecosystem: pip
+    directory: /tools/detection-tester
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "chore(deps)"
+
   # Helm — tracks the pinned Falco chart in helm/falco/Chart.yaml
   - package-ecosystem: helm
     directory: /helm/falco

@@ -31,6 +31,16 @@ data. Only a fired attack proves a detection.
 | 🟧 **Backstop** | Weak / evadable; exists as a secondary net behind a stronger rule for the same technique. |
 | ⬜ **Template** | Non-functional until a data source is enabled; schema unverified. |
 
+> **Deployment status (2026-08):** every KQL rule below now deploys as a live
+> Sentinel scheduled analytics rule via `infrastructure/modules/aks_detections.bicep`
+> — previously only T1098.006 did, and the rest were validated and fixture-tested
+> but never ran anywhere. Two deliberate exceptions, both declared in each rule's
+> `.metadata.json` and enforced by `tools/check-detection-wiring.py`:
+> `network-lateral-movement` has `deploy: false` (its table does not exist in this
+> lab), and `lateral-movement` has `enabled: false` (Draft — deploys but does not
+> alert until its FP allowlist is baselined). **Maturity below still means "how much
+> do I trust this alert", not "is it deployed".**
+
 > **Reality check (2026-07):** the CI now runs two things — a *structure* check
 > (`validate.py`) and a **Tier 1 logic test** (`kql_test.py`) that executes the real
 > `.kql` against recorded fixtures in the Kusto emulator on every PR. Current state:
@@ -47,7 +57,7 @@ data. Only a fired attack proves a detection.
 
 | Tactic | Technique | Detection | Log table | Trigger script | Stratus | Maturity |
 |--------|-----------|-----------|-----------|----------------|:------:|:--------:|
-| Privilege Escalation | **T1610** Deploy Container | `kql/privileged-pod.kql` | `AKSAuditAdmin` | `attack-simulations/privileged-pod.sh` | ✔ | ✅ Proven (Tier 1) |
+| Execution | **T1610** Deploy Container | `kql/privileged-pod.kql` | `AKSAuditAdmin` | `attack-simulations/privileged-pod.sh` | ✔ | ✅ Proven (Tier 1) |
 | Privilege Escalation | **T1611** Escape to Host | `kql/hostpath-volume.kql` | `AKSAuditAdmin` | `attack-simulations/hostpath-volume.sh` | ✔ | ✅ Proven (Tier 1) |
 | Privilege Escalation | **T1611** Escape to Host | `kql/nodes-proxy-grant.kql` | `AKSAuditAdmin` | `attack-simulations/nodes-proxy.sh` | ✔ | ✅ Proven (Tier 1) |
 | Credential Access | **T1552.007** Container API | `kql/dump-secrets.kql` | `AKSAudit` | `attack-simulations/dump-secrets.sh` | ✔ | ✅ Proven (Tier 1) |
@@ -64,12 +74,51 @@ data. Only a fired attack proves a detection.
 
 | Tactic | Technique | Detection | Priority | Trigger script | Maturity |
 |--------|-----------|-----------|----------|----------------|:--------:|
-| Execution | **T1059** Command & Scripting Interpreter | `falco/shell-in-container.yaml` | WARNING | `attack-simulations/shell-in-container.sh` | 🟩 Sound |
+| Execution | **T1059** Command & Scripting Interpreter | `falco/shell-in-container.yaml` | WARNING | `attack-simulations/shell-in-container.sh` | 🟩 Sound (**tuned**) |
 | Execution | **T1059** Command & Scripting Interpreter | `falco/reverse-shell.yaml` | CRITICAL | `attack-simulations/reverse-shell.sh` | 🟩 Sound |
-| Credential Access | **T1528** Steal Application Access Token | `falco/token-theft.yaml` | WARNING | `attack-simulations/token-theft.sh` | 🟩 Sound |
-| Credential Access | **T1552.005** Cloud Instance Metadata API | `falco/imds-access.yaml` | CRITICAL | `attack-simulations/imds-access.sh` | 🟩 Sound |
+| Credential Access | **T1528** Steal Application Access Token | `falco/token-theft.yaml` | WARNING | `attack-simulations/token-theft.sh` | 🟩 Sound (**tuned** — see below) |
+| Credential Access | **T1552.005** Cloud Instance Metadata API | `falco/imds-access.yaml` | CRITICAL | `attack-simulations/imds-access.sh` | 🟩 Sound (**tuned**) |
 | Privilege Escalation | **T1611** Escape to Host | `falco/container-escape.yaml` | CRITICAL | `attack-simulations/container-escape.sh` | 🟩 Sound |
 | Impact | **T1496.001** Compute Hijacking | `falco/crypto-mining.yaml` | CRITICAL | `attack-simulations/crypto-mining.sh` | 🟩 Sound |
+
+
+### Measured false-positive rates (live AKS cluster, 2026-08-24)
+
+Structural validation and fixture tests prove a rule *matches*. Only production
+traffic shows what **else** it matches. Measured at steady state (not startup
+churn — the rate was flat across 25 minutes) on a 3-node AKS 1.34 cluster:
+
+| Rule | Before tuning | After tuning | Dominant noise source |
+|---|---:|---:|---|
+| `token-theft.yaml` | ~174,000/day | **0 noise** | Azure Policy addon, Container Insights collectors |
+| `shell-in-container.yaml` | ~33,000/day | **0 noise** | prometheus-collector (260/345), ama-logs (84/345) |
+| `imds-access.yaml` | ~3,800/day | **0 noise** | prometheus-collector MetricsExtension, cloud-node-manager |
+
+All three now share one allowlist — `aks_platform_agent_images` in
+[`_shared-lists.yaml`](../detections/falco/_shared-lists.yaml) — so a new AKS
+agent is added in one place. Verified after tuning by re-running each technique:
+every true positive still fires, with zero accompanying noise in a 4-minute
+window.
+
+**Token theft, before tuning: 634 alerts in 5 minutes, of which exactly ONE was
+the real attack.** A rule at 1:633 signal-to-noise is not a detection — the true
+positive is invisible and an analyst learns to ignore the rule. Every other hit
+was an AKS platform agent reading its own token (Azure Policy addon, Container
+Insights collectors, metrics-server, Cilium, Retina, Gatekeeper, Defender, CSI
+drivers, CoreDNS).
+
+The fix allowlists specific agent **images** rather than excluding `kube-system`
+wholesale, so a container escape into `kube-system` — a scenario this lab exists
+to teach — still alerts. Cost: the list is AKS-version-specific and needs
+extending when AKS ships a new agent. That already happened once during tuning
+(`addon-token-adapter` surfaced only after the first pass).
+
+Verified after tuning: the attack still fires, with zero accompanying noise.
+
+> **Still untuned:** the upstream Falco rule *Drop and execute new binary in
+> container* fires ~2,500/day, 16 of 17 samples from `kube-system`. It ships in
+> Falco's default ruleset rather than this repo, so tuning it means an override
+> in `falco_rules.local.yaml` rather than editing `detections/falco/`.
 
 ---
 

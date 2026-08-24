@@ -1,0 +1,30 @@
+{
+  "ruleName": "T1550-CrossNamespaceTokenUse",
+  "displayName": "T1550.001 - ServiceAccount Token Used Across Namespaces",
+  "description": "A ServiceAccount token was used to act on resources outside its own namespace, consistent with reuse of a stolen credential to pivot (MITRE T1550.001).",
+  "severity": "Medium",
+  "tactics": [
+    "LateralMovement"
+  ],
+  "techniques": [
+    "T1550"
+  ],
+  "queryFrequency": "PT15M",
+  "queryPeriod": "PT1H",
+  "triggerThreshold": 0,
+  "enabled": false,
+  "deploy": true,
+  "groupingMatchingMethod": "AllEntities",
+  "entityMappings": [
+    {
+      "entityType": "Account",
+      "fieldMappings": [
+        {
+          "identifier": "FullName",
+          "columnName": "Username"
+        }
+      ]
+    }
+  ],
+  "maturity": "draft"
+}

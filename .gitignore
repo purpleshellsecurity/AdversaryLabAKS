@@ -34,3 +34,10 @@ Thumbs.db
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Bicep build artifacts. infrastructure/main.json is deliberately TRACKED (it is
+# the compiled ARM template); tools/check-arm-parity.py keeps it in step with
+# main.bicep. Everything else az/bicep build emits beside a .bicep source is a
+# throwaway.
+infrastructure/modules/*.json
+infrastructure/main_subscription.json
