@@ -98,12 +98,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      # `az bicep install` writes to ~/.azure/bin/bicep, which is deliberately NOT
+      # on PATH — and the runner already ships a different standalone `bicep`
+      # there. check-arm-parity.py searches every compiler it can reach and picks
+      # the one matching the pin, so the shadowing does not matter.
       - name: Install pinned Bicep
         run: |
           VERSION="$(cat infrastructure/.bicep-version)"
           echo "Installing Bicep v$VERSION (pin from infrastructure/.bicep-version)"
           az bicep install --version "v$VERSION"
-          az bicep version
+          echo "az-managed : $(~/.azure/bin/bicep --version)"
+          echo "on PATH    : $(bicep --version 2>/dev/null || echo none)"
 
       - name: Assert main.json matches main.bicep
         run: python tools/check-arm-parity.py

@@ -92,41 +92,97 @@ def pinned_version() -> str:
     return VERSION_PIN_FILE.read_text(encoding="utf-8").strip()
 
 
-def local_bicep_version() -> Optional[str]:
-    """Detect the version of the Bicep compiler on PATH.
+def bicep_candidates() -> list:
+    """Enumerate every Bicep compiler reachable on this machine.
+
+    A host commonly has more than one, at different versions — a GitHub runner
+    ships a standalone `bicep` on PATH AND an az-managed one under
+    ~/.azure/bin/bicep that `az bicep install --version` writes to. Picking the
+    first one found is what made this check fail in CI: the runner's PATH bicep
+    (0.46.1) shadowed the pinned 0.42.1 that the install step had just placed.
 
     Returns:
-        Optional[str]: Dotted version (e.g. "0.42.1"), or None if no compiler was
-        found or its version could not be parsed.
+        list: (kind, executable) pairs, where kind is "standalone" or "az".
     """
-    for cmd in (["bicep", "--version"], ["az", "bicep", "version"]):
-        if not shutil.which(cmd[0]):
-            continue
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            match = re.search(r"(\d+\.\d+\.\d+)", result.stdout)
-            if match:
-                return match.group(1)
-    return None
+    found = []
+    on_path = shutil.which("bicep")
+    if on_path:
+        found.append(("standalone", on_path))
+
+    # The az CLI keeps its own copy here, which is what `az bicep install
+    # --version vX` updates. It is deliberately NOT on PATH.
+    az_managed = Path.home() / ".azure" / "bin" / "bicep"
+    if az_managed.is_file() and str(az_managed) != on_path:
+        found.append(("standalone", str(az_managed)))
+
+    if shutil.which("az"):
+        found.append(("az", "az"))
+    return found
 
 
-def compile_bicep(source: Path, out_path: Path) -> None:
-    """Compile a .bicep file to ARM JSON, preferring `bicep` then `az bicep`.
+def bicep_version(kind: str, exe: str) -> Optional[str]:
+    """Read the version of one Bicep compiler.
 
     Args:
+        kind: "standalone" or "az".
+        exe: Executable path, or "az".
+
+    Returns:
+        Optional[str]: Dotted version, or None if it could not be determined.
+    """
+    cmd = [exe, "--version"] if kind == "standalone" else [exe, "bicep", "version"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(r"(\d+\.\d+\.\d+)", result.stdout + result.stderr)
+    return match.group(1) if match else None
+
+
+def select_compiler(pinned: str):
+    """Find a reachable compiler whose version matches the pin.
+
+    Searching every candidate rather than taking the first means the check works
+    both locally (standalone bicep on PATH) and in CI (az-managed bicep), without
+    either environment needing to arrange its PATH just so.
+
+    Args:
+        pinned: The required version, e.g. "0.42.1".
+
+    Returns:
+        tuple: ((kind, exe), discovered) where the first element is the matching
+        compiler or None, and `discovered` lists every (label, version) seen —
+        used to explain the failure when nothing matches.
+    """
+    discovered = []
+    match = None
+    for kind, exe in bicep_candidates():
+        version = bicep_version(kind, exe)
+        label = "az bicep" if kind == "az" else exe
+        discovered.append((label, version or "unknown"))
+        if version == pinned and match is None:
+            match = (kind, exe)
+    return match, discovered
+
+
+def compile_bicep(compiler, source: Path, out_path: Path) -> None:
+    """Compile a .bicep file to ARM JSON with a specific compiler.
+
+    Args:
+        compiler: (kind, exe) pair from select_compiler().
         source: Path to the .bicep file.
         out_path: Where to write the compiled JSON.
 
     Raises:
-        SystemExit: If no Bicep compiler is available, or compilation fails.
+        SystemExit: If compilation fails.
     """
-    if shutil.which("bicep"):
-        cmd = ["bicep", "build", str(source), "--outfile", str(out_path)]
-    elif shutil.which("az"):
-        # `az bicep build` has no --outfile, so compile in place and move.
-        cmd = ["az", "bicep", "build", "--file", str(source), "--outfile", str(out_path)]
+    kind, exe = compiler
+    if kind == "standalone":
+        cmd = [exe, "build", str(source), "--outfile", str(out_path)]
     else:
-        sys.exit("ERROR: neither `bicep` nor `az` is on PATH — cannot verify parity")
+        cmd = [exe, "bicep", "build", "--file", str(source), "--outfile", str(out_path)]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -198,18 +254,21 @@ def main() -> int:
     # reported as "cannot verify" — never as drift, which is the mistake this
     # check exists to avoid making.
     pinned = pinned_version()
-    local = local_bicep_version()
-    if local is None:
-        print(f"::warning::no Bicep compiler on PATH — cannot verify main.json (need {pinned})")
-        return EXIT_CANNOT_VERIFY
-    if local != pinned:
-        print(f"::warning::Bicep {local} is installed but main.json is generated with {pinned}.")
-        print(f"::warning::Cannot verify parity — this is NOT a drift failure.")
+    compiler, discovered = select_compiler(pinned)
+    if compiler is None:
+        print(f"::warning::No Bicep {pinned} found — cannot verify main.json.")
+        print(f"::warning::This is NOT a drift failure.")
+        if discovered:
+            print("Compilers found:")
+            for label, version in discovered:
+                print(f"  {version:<10} {label}")
+        else:
+            print("No Bicep compiler found at all.")
         print(f"Install the pinned version:  az bicep install --version v{pinned}")
         return EXIT_CANNOT_VERIFY
 
     if args.write:
-        compile_bicep(BICEP_SOURCE, ARM_TEMPLATE)
+        compile_bicep(compiler, BICEP_SOURCE, ARM_TEMPLATE)
         print(f"Recompiled {ARM_TEMPLATE.relative_to(REPO_ROOT)} from {BICEP_SOURCE.name} "
               f"using Bicep {pinned}.")
         return 0
@@ -219,7 +278,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         rebuilt_path = Path(tmp) / "rebuilt.json"
-        compile_bicep(BICEP_SOURCE, rebuilt_path)
+        compile_bicep(compiler, BICEP_SOURCE, rebuilt_path)
         rebuilt = json.loads(rebuilt_path.read_text(encoding="utf-8"))
 
     committed = json.loads(ARM_TEMPLATE.read_text(encoding="utf-8"))
