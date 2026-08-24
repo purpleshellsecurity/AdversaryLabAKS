@@ -26,7 +26,7 @@
     spawned_process and
     container and
     proc.name in (shell_binaries) and
-    not container.image.repository in (aks_platform_agent_images)
+    not platform_agent_activity
   # output includes the PARENT process (%proc.pname) — the webshell tell — plus the
   # usual container/pod/namespace/image context.
   output: >

@@ -32,7 +32,7 @@
     outbound and
     container and
     fd.sip = "169.254.169.254" and
-    not container.image.repository in (aks_platform_agent_images)
+    not platform_agent_activity
   # output records who/what made the call and the connection + container context.
   output: >
     Container reached cloud metadata endpoint

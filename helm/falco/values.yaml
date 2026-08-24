@@ -71,6 +71,7 @@ falco:
           "mcr.microsoft.com/azuremonitor/containerinsights/ciprod/prometheus-collector/images",
           "mcr.microsoft.com/azuredefender/stable/low-level-collector",
           "mcr.microsoft.com/azuredefender/stable/pod-collector",
+          "mcr.microsoft.com/azuredefender/stable/security-publisher",
           "mcr.microsoft.com/containernetworking/cilium/cilium-distroless",
           "mcr.microsoft.com/containernetworking/cilium/operator-generic",
           "mcr.microsoft.com/containernetworking/retina-operator-enterprise",
@@ -86,8 +87,18 @@ falco:
           "mcr.microsoft.com/oss/v2/kubernetes-csi/secrets-store/driver",
           "mcr.microsoft.com/oss/v2/eraser/eraser-manager",
           "mcr.microsoft.com/aks/msi/addon-token-adapter",
-          "docker.io/falcosecurity/k8s-metacollector"
         ]
+
+      - list: aks_platform_namespaces
+        items: ["kube-system", "gatekeeper-system", "calico-system", "azure-arc"]
+
+      - macro: platform_agent_activity
+        condition: >
+          (container.image.repository in (aks_platform_agent_images) and
+           k8s.ns.name in (aks_platform_namespaces))
+          or
+          (container.image.repository = "docker.io/falcosecurity/k8s-metacollector" and
+           k8s.ns.name = "monitoring")
 
       - rule: Container Escape via nsenter
         desc: Detects nsenter execution which may indicate container escape (MITRE T1611)
@@ -126,7 +137,7 @@ falco:
           outbound and
           container and
           fd.sip = "169.254.169.254" and
-          not container.image.repository in (aks_platform_agent_images)
+          not platform_agent_activity
         output: >
           Container reached cloud metadata endpoint
           (user=%user.name proc=%proc.name cmdline=%proc.cmdline
@@ -157,7 +168,7 @@ falco:
           spawned_process and
           container and
           proc.name in (shell_binaries) and
-          not container.image.repository in (aks_platform_agent_images)
+          not platform_agent_activity
         output: >
           Shell spawned in container
           (user=%user.name proc=%proc.name parent=%proc.pname cmdline=%proc.cmdline
@@ -173,7 +184,7 @@ falco:
           container and
           (fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/token" or
            fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt") and
-          not container.image.repository in (aks_platform_agent_images)
+          not platform_agent_activity
         output: >
           SA token read inside container
           (user=%user.name command=%proc.cmdline file=%fd.name

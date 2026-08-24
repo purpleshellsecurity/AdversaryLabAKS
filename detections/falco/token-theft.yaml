@@ -32,7 +32,7 @@
     container and
     (fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/token" or
      fd.name = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt") and
-    not container.image.repository in (aks_platform_agent_images)
+    not platform_agent_activity
   # output names the reader (%proc.cmdline), the file, and the container context.
   output: >
     SA token read inside container

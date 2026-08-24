@@ -31,6 +31,31 @@
 #   Matching on the agent IMAGE keeps kube-system watched: an unexpected process
 #   in an unexpected image still fires, even there.
 #
+# WHY THE IMAGE ALONE IS NOT ENOUGH — READ THIS BEFORE EDITING
+#   `container.image.repository` is ATTACKER-CONTROLLED. Every image below is
+#   publicly pullable from MCR, and the red-team ServiceAccount has wildcard
+#   verbs on pods in its namespace. An attacker can therefore simply *wear* an
+#   allowlisted image and become invisible to every rule that trusts this list.
+#
+#   That is not theoretical — it was demonstrated on this cluster. A pod running
+#   mcr.microsoft.com/azuremonitor/containerinsights/ciprod:3.6.0 in the
+#   `attacker` namespace stole a ServiceAccount token, queried IMDS, and spawned
+#   shells, and produced ZERO alerts, while an identical pod on a normal image
+#   was detected every time.
+#
+#   So the exclusion must ALSO require a namespace the attacker cannot place a
+#   pod into. Platform agents only ever run in the namespaces below; a pod
+#   wearing a platform image ANYWHERE ELSE is suspicious by construction.
+#   Rules must therefore test image AND namespace together:
+#
+#       not (container.image.repository in (aks_platform_agent_images) and
+#            k8s.ns.name in (aks_platform_namespaces))
+#
+#   Residual risk, accepted: an attacker who can already create pods in
+#   kube-system with a platform image evades these rules. Reaching that position
+#   requires privilege far beyond the namespace-scoped access modelled here, and
+#   pod creation in kube-system is itself high-signal on the management plane.
+#
 # THE COST, STATED PLAINLY
 #   This list is AKS-version-specific. A new platform agent shows up as new
 #   noise and has to be added. That already happened once during tuning
@@ -53,6 +78,7 @@
     # Defender for Containers sensors
     "mcr.microsoft.com/azuredefender/stable/low-level-collector",
     "mcr.microsoft.com/azuredefender/stable/pod-collector",
+    "mcr.microsoft.com/azuredefender/stable/security-publisher",
     # Cilium / Retina dataplane and network observability
     "mcr.microsoft.com/containernetworking/cilium/cilium-distroless",
     "mcr.microsoft.com/containernetworking/cilium/operator-generic",
@@ -74,6 +100,32 @@
     # AKS managed-identity token adapter (low frequency — surfaced only after
     # the first tuning pass, which is the maintenance cost noted above)
     "mcr.microsoft.com/aks/msi/addon-token-adapter",
-    # Falco's own Kubernetes metadata collector
-    "docker.io/falcosecurity/k8s-metacollector"
   ]
+
+# Namespaces where AKS platform agents legitimately run. Pairing this with the
+# image list is what stops the allowlist becoming an evasion path — see the
+# note above. An attacker with namespace-scoped pod creation cannot place a pod
+# here, so the two conditions together are not attacker-satisfiable.
+- list: aks_platform_namespaces
+  items: ["kube-system", "gatekeeper-system", "calico-system", "azure-arc"]
+
+# ── The exclusion every tuned rule uses ─────────────────────────────────────
+# A macro rather than repeating the expression in three rules: one place to
+# read, one place to change, and no chance of the three drifting apart.
+#
+# Both clauses pair an image with the namespace it legitimately runs in. Neither
+# half is sufficient alone:
+#   - image alone is attacker-controlled (proven: a pod wearing an allowlisted
+#     image evaded all three rules)
+#   - namespace alone would blind the rules in kube-system entirely
+#
+# Falco's own metacollector gets its own clause rather than adding `monitoring`
+# to aks_platform_namespaces, which would have extended the exception to all 22
+# platform images in the blue-team namespace for no reason.
+- macro: platform_agent_activity
+  condition: >
+    (container.image.repository in (aks_platform_agent_images) and
+     k8s.ns.name in (aks_platform_namespaces))
+    or
+    (container.image.repository = "docker.io/falcosecurity/k8s-metacollector" and
+     k8s.ns.name = "monitoring")
