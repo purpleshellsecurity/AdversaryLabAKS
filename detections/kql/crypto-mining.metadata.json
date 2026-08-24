@@ -15,6 +15,16 @@
   "enabled": true,
   "deploy": true,
   "groupingMatchingMethod": "AnyAlert",
-  "entityMappings": [],
+  "entityMappings": [
+    {
+      "entityType": "Host",
+      "fieldMappings": [
+        {
+          "identifier": "HostName",
+          "columnName": "PodName"
+        }
+      ]
+    }
+  ],
   "maturity": "backstop"
 }

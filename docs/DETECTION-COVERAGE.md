@@ -57,7 +57,7 @@ data. Only a fired attack proves a detection.
 
 | Tactic | Technique | Detection | Log table | Trigger script | Stratus | Maturity |
 |--------|-----------|-----------|-----------|----------------|:------:|:--------:|
-| Privilege Escalation | **T1610** Deploy Container | `kql/privileged-pod.kql` | `AKSAuditAdmin` | `attack-simulations/privileged-pod.sh` | ✔ | ✅ Proven (Tier 1) |
+| Execution | **T1610** Deploy Container | `kql/privileged-pod.kql` | `AKSAuditAdmin` | `attack-simulations/privileged-pod.sh` | ✔ | ✅ Proven (Tier 1) |
 | Privilege Escalation | **T1611** Escape to Host | `kql/hostpath-volume.kql` | `AKSAuditAdmin` | `attack-simulations/hostpath-volume.sh` | ✔ | ✅ Proven (Tier 1) |
 | Privilege Escalation | **T1611** Escape to Host | `kql/nodes-proxy-grant.kql` | `AKSAuditAdmin` | `attack-simulations/nodes-proxy.sh` | ✔ | ✅ Proven (Tier 1) |
 | Credential Access | **T1552.007** Container API | `kql/dump-secrets.kql` | `AKSAudit` | `attack-simulations/dump-secrets.sh` | ✔ | ✅ Proven (Tier 1) |

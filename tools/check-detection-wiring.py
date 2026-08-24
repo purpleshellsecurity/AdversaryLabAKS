@@ -72,6 +72,29 @@ VALID_GROUPING = {"AllEntities", "AnyAlert", "Selected"}
 # Sentinel takes the PARENT technique only — "T1552", never "T1552.007".
 PARENT_TECHNIQUE = re.compile(r"^T\d{4}$")
 
+# Sentinel rejects a rule with no entity mappings outright:
+#   "Invalid length of '0' for 'EntityMappings'. length should be between '1' and '10'"
+MIN_ENTITY_MAPPINGS, MAX_ENTITY_MAPPINGS = 1, 10
+
+# Sentinel validates that each declared technique belongs to at least one of the
+# declared tactics, and fails the deployment when it does not:
+#   "No valid tactic corresponding to the technique T1610 was provided"
+#
+# This table is the ATT&CK tactic set for each technique the repo uses. It is not
+# the full matrix — extend it when adding a technique. It is here because a wrong
+# pairing is otherwise only discoverable by failing a real Azure deployment,
+# which is exactly how T1610 was found (DETECTION-COVERAGE.md filed T1610 under
+# Privilege Escalation; ATT&CK puts it under Execution and Defense Evasion).
+TECHNIQUE_TACTICS = {
+    "T1046": {"Discovery"},
+    "T1098": {"Persistence", "PrivilegeEscalation"},
+    "T1496": {"Impact"},
+    "T1550": {"DefenseEvasion", "LateralMovement"},
+    "T1552": {"CredentialAccess"},
+    "T1610": {"Execution", "DefenseEvasion"},
+    "T1611": {"PrivilegeEscalation"},
+}
+
 # ISO-8601 duration, the subset Sentinel accepts for schedules (e.g. PT15M, PT1H, P1D).
 ISO_DURATION = re.compile(r"^P(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?)?$")
 
@@ -197,12 +220,30 @@ def check_detection(slug: str, wired: set[str], seen_rule_names: dict) -> list[s
     else:
         seen_rule_names[rule_name] = slug
 
-    # ── Grouping strategy has to match whether entities exist ───────────────
+    # ── Technique must belong to a declared tactic ──────────────────────────
+    declared_tactics = set(meta["tactics"])
+    for technique in meta["techniques"]:
+        known = TECHNIQUE_TACTICS.get(str(technique))
+        if known is None:
+            problems.append(
+                f"{slug}: technique '{technique}' is not in TECHNIQUE_TACTICS — add its "
+                "ATT&CK tactics there so this pairing can be checked"
+            )
+        elif not (declared_tactics & known):
+            problems.append(
+                f"{slug}: technique '{technique}' does not belong to any declared tactic "
+                f"{sorted(declared_tactics)} — ATT&CK places it under {sorted(known)}. "
+                "Sentinel rejects this at deployment."
+            )
+
+    # ── Entity mappings: Sentinel requires between 1 and 10 ─────────────────
     mappings = meta["entityMappings"]
-    if not mappings and meta["groupingMatchingMethod"] == "AllEntities":
+    if not MIN_ENTITY_MAPPINGS <= len(mappings) <= MAX_ENTITY_MAPPINGS:
         problems.append(
-            f"{slug}: groupingMatchingMethod is 'AllEntities' but the rule maps no "
-            "entities, so alerts cannot group — use 'AnyAlert'"
+            f"{slug}: {len(mappings)} entity mapping(s) — Sentinel requires between "
+            f"{MIN_ENTITY_MAPPINGS} and {MAX_ENTITY_MAPPINGS} and rejects the rule "
+            "otherwise. A rule with no identity columns can still map a pod name "
+            "onto a Host entity."
         )
 
     # ── Entity mappings must name columns the query returns ─────────────────

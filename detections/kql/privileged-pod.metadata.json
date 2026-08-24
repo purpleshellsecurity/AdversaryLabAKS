@@ -4,7 +4,8 @@
   "description": "A pod was created with securityContext.privileged=true by a principal outside the AKS system controller set. A privileged container holds all capabilities and effectively unrestricted host access \u2014 the most direct route to node compromise (MITRE T1610).",
   "severity": "High",
   "tactics": [
-    "PrivilegeEscalation"
+    "Execution",
+    "DefenseEvasion"
   ],
   "techniques": [
     "T1610"

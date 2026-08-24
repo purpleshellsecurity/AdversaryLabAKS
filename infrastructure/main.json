@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.42.1.51946",
-      "templateHash": "13704250931759601851"
+      "templateHash": "948291160104973118"
     }
   },
   "parameters": {
@@ -1793,7 +1793,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.42.1.51946",
-              "templateHash": "4104373537220325433"
+              "templateHash": "5091127553819572858"
             }
           },
           "parameters": {
@@ -1811,7 +1811,8 @@
               "description": "A pod was created with securityContext.privileged=true by a principal outside the AKS system controller set. A privileged container holds all capabilities and effectively unrestricted host access — the most direct route to node compromise (MITRE T1610).",
               "severity": "High",
               "tactics": [
-                "PrivilegeEscalation"
+                "Execution",
+                "DefenseEvasion"
               ],
               "techniques": [
                 "T1610"
@@ -1893,7 +1894,17 @@
               "enabled": true,
               "deploy": true,
               "groupingMatchingMethod": "AnyAlert",
-              "entityMappings": [],
+              "entityMappings": [
+                {
+                  "entityType": "Host",
+                  "fieldMappings": [
+                    {
+                      "identifier": "HostName",
+                      "columnName": "PodName"
+                    }
+                  ]
+                }
+              ],
               "maturity": "backstop"
             },
             "$fxv#13": "// ============================================================================\n// Detection: Container Escape via nsenter\n// MITRE ATT&CK: T1611 - Escape to Host\n// Source: AKSAudit + ContainerLogV2\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// `nsenter` enters another process's Linux namespaces. Inside a privileged\n// container an attacker runs `nsenter --target 1 --mount ...` to jump into the\n// HOST's namespaces (PID 1 = the node's init) and effectively break out of the\n// container onto the node — that is T1611 (Escape to Host).\n//\n// This query is LOG/STDOUT-based: it scans container stdout/stderr captured in\n// Log Analytics for the literal string \"nsenter\". It is the cheap, always-on\n// complement to the Falco syscall rule (detections/falco/container-escape.yaml),\n// which catches the actual process spawn at the kernel level.\n//\n// TABLE: ContainerLogV2 — the Azure Monitor for Containers table holding one row\n//        per container stdout/stderr line, enriched with pod/namespace metadata.\n\nContainerLogV2                       // read collected container console logs\n| where TimeGenerated > ago(1h)      // time filter first (cheapest, prunes the scan window)\n| where LogMessage has \"nsenter\"     // `has` = whole-token match on the log text; the escape tell\n| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage  // keep only the analyst-relevant columns\n| extend MitreTechnique = \"T1611\"    // tag every hit with the ATT&CK technique for triage/reporting\n",
@@ -1914,7 +1925,17 @@
               "enabled": true,
               "deploy": true,
               "groupingMatchingMethod": "AnyAlert",
-              "entityMappings": [],
+              "entityMappings": [
+                {
+                  "entityType": "Host",
+                  "fieldMappings": [
+                    {
+                      "identifier": "HostName",
+                      "columnName": "PodName"
+                    }
+                  ]
+                }
+              ],
               "maturity": "backstop"
             },
             "$fxv#15": "// ============================================================================\n// Detection: Cryptocurrency Mining in Container\n// MITRE ATT&CK: T1496 - Resource Hijacking\n// Source: ContainerLogV2 + InsightsMetrics\n// ============================================================================\n\n// HOW THIS DETECTION WORKS\n// -------------------------\n// Crypto mining (T1496 Resource Hijacking) steals the cluster's CPU to mine coins.\n// There are two complementary ways to catch it, and this file ships both:\n//\n//   1. PROCESS/SIGNATURE (active below): scan container logs for the fingerprints\n//      of miners — binary names (xmrig, minerd), mining-pool protocol strings\n//      (stratum+tcp), algorithm names (cryptonight), and known pool hostnames.\n//   2. CPU ANOMALY (commented out): watch resource metrics for sustained high CPU,\n//      which catches unknown/renamed miners that leave no signature.\n//\n// The signature approach is precise (low false positives) but misses novel miners;\n// the anomaly approach is the safety net. In production you'd run both.\n\n// --- Approach 1: signature match on container stdout/stderr -------------------\n// TABLE: ContainerLogV2 — collected container console output.\nContainerLogV2\n| where TimeGenerated > ago(1h)          // recent window first\n// has_any = match if the log line contains ANY of these tokens. Mix of binary\n// names, pool-protocol markers, and a known pool hostname — the miner's fingerprints.\n| where LogMessage has_any (\"xmrig\", \"minerd\", \"stratum+tcp\", \"cryptonight\", \"pool.minexmr\")\n| project TimeGenerated, PodName, PodNamespace, ContainerName, LogMessage  // analyst-relevant columns\n| extend MitreTechnique = \"T1496\"        // tag with the ATT&CK technique\n\n// --- Approach 2: CPU anomaly (DISABLED — reference implementation) ------------\n// Enable when signature coverage isn't enough; catches renamed/unknown miners.\n// TABLE: InsightsMetrics — the Azure Monitor container metrics table.\n// InsightsMetrics\n// | where TimeGenerated > ago(1h)\n// | where Namespace == \"container.azm.ms/cpu\"        // the CPU metric namespace\n// | where Name == \"cpuUsageNanoCores\"                // per-container CPU usage counter\n// | extend Tags = parse_json(Tags)                   // Tags is JSON; parse to read podName/podNamespace\n// | where todouble(Val) > 1800000000 // >1.8 cores sustained = suspicious\n// | project TimeGenerated, PodName = tostring(Tags.podName), Namespace = tostring(Tags.podNamespace), CpuNanoCores = Val\n",
@@ -1966,7 +1987,17 @@
               "enabled": true,
               "deploy": false,
               "groupingMatchingMethod": "AnyAlert",
-              "entityMappings": [],
+              "entityMappings": [
+                {
+                  "entityType": "Host",
+                  "fieldMappings": [
+                    {
+                      "identifier": "HostName",
+                      "columnName": "SourcePod"
+                    }
+                  ]
+                }
+              ],
               "maturity": "template"
             },
             "$fxv#19": "// ============================================================================\n// Detection: Unexpected East-West (Pod-to-Pod) Network Flow\n// MITRE ATT&CK: T1046 - Network Service Discovery\n// Source: Container Network Logs (ACNS / Hubble)  [TEMPLATE — see notes below]\n// ============================================================================\n//\n// STATUS: TEMPLATE / UNVERIFIED. This is the network-plane complement to\n// lateral-movement.kql (which is audit/token-based). It requires the pod-to-pod\n// flow-log plane, which is NOT enabled by default.\n//\n// ENABLEMENT (two steps):\n//   1. ACNS observability — set in infrastructure/modules/aks_cluster.bicep\n//      (networkProfile.advancedNetworking.observability). This turns on Hubble.\n//   2. Stored \"Container Network Logs\" → Log Analytics — a SEPARATE, newer AKS\n//      feature (flow logs land in a resource-specific table, queryable with KQL).\n//      Its enablement path and exact TABLE NAME + SCHEMA are evolving — CONFIRM\n//      against current AKS docs and a captured sample before trusting this query.\n//      The table below is a placeholder; adjust field names to the real schema.\n//\n// Once real flow-log data exists, capture a sample and tune this exactly the way\n// the audit detections were tuned — the field paths here are best-effort, not verified.\n//\n// Idea: an attacker moving laterally opens NEW cross-namespace pod-to-pod flows —\n// connections between namespaces that normally never talk. Baseline the legitimate\n// pairs first, then alert on the rest.\n\n// HOW THIS DETECTION WORKS (once the flow-log plane exists)\n// ---------------------------------------------------------\n// Unlike the other detections, this reads the NETWORK plane (pod-to-pod flow logs\n// from Cilium/Hubble), not the API audit log. The idea: an attacker mapping the\n// cluster or pivoting between workloads opens NEW east-west connections between\n// namespaces that normally never talk (T1046 Network Service Discovery). We keep\n// only cross-namespace, successfully-forwarded flows and roll them up per pod-pair.\n//\n// TABLE: RetinaNetworkFlowLogs — PLACEHOLDER name; confirm against the real\n//        Container Network Logs schema before trusting this.\n\n// CONFIRM the table name once Container Network Logs are enabled (placeholder):\nRetinaNetworkFlowLogs\n| where TimeGenerated > ago(1h)        // recent window first\n| where FlowType == \"L3_L4\"            // adjust to real schema — keep network-layer connection flows\n| where Verdict == \"FORWARDED\"         // only flows the network policy ALLOWED (a real connection happened)\n| where SourceNamespace != DestinationNamespace          // cross-namespace = east-west\n| where SourceNamespace !in (\"kube-system\", \"gatekeeper-system\")   // baseline / allowlist\n// summarize = aggregate. Per (source pod, dest pod, 5-min bucket) count the flows\n// and collect the DISTINCT destination ports touched (make_set) — a pod hitting\n// many ports on a peer looks like scanning/discovery.\n| summarize Flows = count(), Ports = make_set(DestinationPort)\n        by SourceNamespace, SourcePod = SourcePodName,\n           DestinationNamespace, DestinationPod = DestinationPodName, bin(TimeGenerated, 5m)  // bin() = fixed 5-min time buckets\n| extend MitreTechnique = \"T1046\"    // tag with the ATT&CK technique\n",
