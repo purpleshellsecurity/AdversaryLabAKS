@@ -20,5 +20,5 @@ version: 0.1.0                                    # version of THIS umbrella cha
 # opens a PR when a new version ships; CI (helm-lint) validates it.
 dependencies:
   - name: falco                                   # the upstream subchart being pulled in
-    version: 9.1.0                                # PINNED Falco chart version (reproducible installs)
+    version: 9.2.0                                # PINNED Falco chart version (reproducible installs)
     repository: https://falcosecurity.github.io/charts  # official Falco Helm repo
