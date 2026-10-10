@@ -1,0 +1,19 @@
+# CODEOWNERS
+# Requires review from the listed user(s) before merging changes to these paths.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default — catch anything not matched below
+*                                           @purpleshellsecurity
+
+# Workflows — any pipeline change needs sign-off
+.github/workflows/                          @purpleshellsecurity
+
+# Infrastructure — Bicep changes affect real Azure resources
+infrastructure/                             @purpleshellsecurity
+
+# Subscription-scope resources — highest blast radius
+infrastructure/main_subscription.bicep      @purpleshellsecurity
+infrastructure/modules/aks_policy_defs.bicep @purpleshellsecurity
+
+# Security exceptions register — must be reviewed, not rubber-stamped
+docs/security-exceptions.yaml              @purpleshellsecurity

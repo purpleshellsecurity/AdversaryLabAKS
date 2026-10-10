@@ -1,0 +1,36 @@
+# Credentials and secrets
+credentials.txt
+lab_config.json
+*.pfx
+*.cer
+*.pem
+*.key
+
+# Deployment outputs (may contain IPs, resource IDs)
+deploy-output*.json
+deployment-*.json
+azuredeploy.parameters.local.json
+
+# Logs
+*.log
+
+# Kubeconfig - never commit
+kubeconfig
+kubeconfig.yaml
+*.kubeconfig
+
+# Helm
+*.tgz
+charts/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+*.swp
+
+# Python bytecode
+__pycache__/
+*.pyc

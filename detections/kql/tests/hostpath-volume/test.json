@@ -1,0 +1,17 @@
+{
+  "rule": "detections/kql/hostpath-volume.kql",
+  "table": "AKSAuditAdmin",
+  "inject_timegenerated": true,
+  "schema": [
+    { "name": "Verb", "type": "string" },
+    { "name": "User", "type": "dynamic" },
+    { "name": "ObjectRef", "type": "dynamic" },
+    { "name": "RequestObject", "type": "dynamic" },
+    { "name": "SourceIps", "type": "dynamic" },
+    { "name": "RequestUri", "type": "string" }
+  ],
+  "cases": [
+    { "name": "human mounts node root via hostPath fires", "fixture": "malicious.json", "expect": "match" },
+    { "name": "emptyDir volume and system: actor stay silent", "fixture": "benign.json", "expect": "no_match" }
+  ]
+}

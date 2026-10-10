@@ -1,0 +1,16 @@
+{
+  "rule": "detections/kql/container-escape.kql",
+  "table": "ContainerLogV2",
+  "inject_timegenerated": true,
+  "note": "Tier 1 proves the log-string match works IF 'nsenter' appears in container stdout. The real weakness is that a failed nsenter escape rarely logs its own name, so this rule stays 'Backstop' behind the Falco syscall rule that sees the execve directly.",
+  "schema": [
+    { "name": "LogMessage", "type": "string" },
+    { "name": "PodName", "type": "string" },
+    { "name": "PodNamespace", "type": "string" },
+    { "name": "ContainerName", "type": "string" }
+  ],
+  "cases": [
+    { "name": "nsenter string in logs fires", "fixture": "malicious.json", "expect": "match" },
+    { "name": "ordinary application log is silent", "fixture": "benign.json", "expect": "no_match" }
+  ]
+}

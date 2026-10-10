@@ -1,0 +1,9 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "attacker@corp.com" },
+    "ObjectRef": { "resource": "serviceaccounts", "subresource": "token", "namespace": "kube-system", "name": "clusterrole-aggregation-controller" },
+    "SourceIps": ["10.1.2.3"],
+    "RequestUri": "/api/v1/namespaces/kube-system/serviceaccounts/clusterrole-aggregation-controller/token"
+  }
+]

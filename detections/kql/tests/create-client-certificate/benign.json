@@ -1,0 +1,14 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "system:node:aks-nodepool1-12345" },
+    "ObjectRef": { "resource": "certificatesigningrequests", "name": "csr-kubelet-abcde" },
+    "RequestUri": "/apis/certificates.k8s.io/v1/certificatesigningrequests"
+  },
+  {
+    "Verb": "update",
+    "User": { "username": "system:serviceaccount:kube-system:certificate-controller" },
+    "ObjectRef": { "resource": "certificatesigningrequests", "subresource": "approval", "name": "csr-kubelet-abcde" },
+    "RequestUri": "/apis/certificates.k8s.io/v1/certificatesigningrequests/csr-kubelet-abcde/approval"
+  }
+]

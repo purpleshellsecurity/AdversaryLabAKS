@@ -1,0 +1,18 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "developer@corp.com" },
+    "ObjectRef": { "resource": "pods", "namespace": "default", "name": "normal-app" },
+    "RequestObject": { "spec": { "volumes": [ { "name": "cache", "emptyDir": {} } ] } },
+    "SourceIps": ["10.1.2.4"],
+    "RequestUri": "/api/v1/namespaces/default/pods"
+  },
+  {
+    "Verb": "create",
+    "User": { "username": "system:serviceaccount:kube-system:csi-azuredisk-node-sa" },
+    "ObjectRef": { "resource": "pods", "namespace": "kube-system", "name": "csi-azuredisk-node-xyz" },
+    "RequestObject": { "spec": { "volumes": [ { "name": "plugin-dir", "hostPath": { "path": "/var/lib/kubelet/plugins" } } ] } },
+    "SourceIps": ["10.1.0.11"],
+    "RequestUri": "/api/v1/namespaces/kube-system/pods"
+  }
+]

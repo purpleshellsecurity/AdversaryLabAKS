@@ -1,0 +1,8 @@
+[
+  {
+    "LogMessage": "[2026-07-24T02:00:00Z] xmrig 6.21.0 connecting to stratum+tcp://pool.minexmr.com:4444",
+    "PodName": "compromised-web-7c9",
+    "PodNamespace": "victim",
+    "ContainerName": "web"
+  }
+]

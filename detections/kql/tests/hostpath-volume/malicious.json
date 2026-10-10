@@ -1,0 +1,10 @@
+[
+  {
+    "Verb": "create",
+    "User": { "username": "attacker@corp.com" },
+    "ObjectRef": { "resource": "pods", "namespace": "victim", "name": "breakout-pod" },
+    "RequestObject": { "spec": { "volumes": [ { "name": "noderoot", "hostPath": { "path": "/" } } ] } },
+    "SourceIps": ["10.1.2.3"],
+    "RequestUri": "/api/v1/namespaces/victim/pods"
+  }
+]
