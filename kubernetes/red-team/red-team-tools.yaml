@@ -40,14 +40,16 @@ spec:
   serviceAccountName: red-team-operator               # broad-RBAC attacker identity (see rbac.yaml)
   containers:
     - name: kdigger
-      image: docker.io/alpine:latest                  # minimal base; the real tool is fetched below
+      image: docker.io/alpine@sha256:d56c381f961d307a21b3ca004cf1e3910f106644aefb1f43e654c8a56c4fd395 # minimal base; the real tool is fetched below
       command: ["/bin/sh", "-c"]
       args:
         # Bootstrap: install curl, download the kdigger release, install it,
         # then sleep so the operator can exec in and run `kdigger dig`.
         - |
           apk add --no-cache curl &&
-          curl -fSL "https://github.com/quarkslab/kdigger/releases/download/v1.5.1/kdigger-linux-amd64.tar.gz" | tar -xz &&
+          curl -fSL -o /tmp/kdigger-linux-amd64.tar.gz "https://github.com/quarkslab/kdigger/releases/download/v1.5.1/kdigger-linux-amd64.tar.gz" &&
+          echo "7ea4c34066228cc95f378368e5964e507d2e6cb301d25de620a266b36317507b  /tmp/kdigger-linux-amd64.tar.gz" | sha256sum -c - &&
+          tar -xzf /tmp/kdigger-linux-amd64.tar.gz &&
           chmod +x kdigger-linux-amd64 &&
           mv kdigger-linux-amd64 /usr/local/bin/kdigger &&
           echo "kdigger ready. Run: kdigger dig" &&
@@ -76,14 +78,15 @@ spec:
   serviceAccountName: red-team-operator
   containers:
     - name: cdk
-      image: docker.io/alpine:latest
+      image: docker.io/alpine@sha256:d56c381f961d307a21b3ca004cf1e3910f106644aefb1f43e654c8a56c4fd395
       command: ["/bin/sh", "-c"]
       args:
         # Download the single-binary CDK release, make it executable, then idle.
         - |
           apk add --no-cache curl &&
-          curl -fSL -o /usr/local/bin/cdk "https://github.com/cdk-team/CDK/releases/download/v1.5.2/cdk_linux_amd64" &&
-          chmod +x /usr/local/bin/cdk &&
+          curl -fSL -o /tmp/cdk_linux_amd64 "https://github.com/cdk-team/CDK/releases/download/v1.5.2/cdk_linux_amd64" &&
+          echo "af751c690671ffc0da6380ef94a25df3dfc5911c448319f7f6b90df55cca7b7d  /tmp/cdk_linux_amd64" | sha256sum -c - &&
+          install -m 0755 /tmp/cdk_linux_amd64 /usr/local/bin/cdk &&
           echo "CDK ready. Run: cdk evaluate" &&
           sleep infinity
       resources:
@@ -110,7 +113,7 @@ spec:
   serviceAccountName: red-team-operator
   containers:
     - name: peirates
-      image: docker.io/alpine:latest
+      image: docker.io/alpine@sha256:d56c381f961d307a21b3ca004cf1e3910f106644aefb1f43e654c8a56c4fd395
       command: ["/bin/sh", "-c"]
       args:
         # Peirates ships as an xz-compressed tarball, so xz is added; the binary
@@ -118,7 +121,9 @@ spec:
         - |
           apk add --no-cache curl xz &&
           mkdir /tmp/p &&
-          curl -sL https://github.com/inguardians/peirates/releases/download/v1.1.28/peirates-linux-amd64.tar.xz | xz -d | tar xf - -C /tmp/p &&
+          curl -fsSL -o /tmp/peirates-linux-amd64.tar.xz https://github.com/inguardians/peirates/releases/download/v1.1.28/peirates-linux-amd64.tar.xz &&
+          echo "59f0949ca6a280e74837671d21efe0b485c7ac851d64eec532e139655676bdb4  /tmp/peirates-linux-amd64.tar.xz" | sha256sum -c - &&
+          xz -d -c /tmp/peirates-linux-amd64.tar.xz | tar xf - -C /tmp/p &&
           find /tmp/p -type f -name peirates -exec cp {} /usr/local/bin/peirates \; &&
           chmod +x /usr/local/bin/peirates &&
           echo "Peirates ready. Run: peirates" &&
@@ -147,7 +152,7 @@ spec:
   serviceAccountName: red-team-operator
   containers:
     - name: kubectl
-      image: docker.io/bitnami/kubectl:latest         # image already contains kubectl; no bootstrap needed
+      image: docker.io/bitnami/kubectl@sha256:e72a3bb0fca80e4b32ffdc675462ca3dd68c9752716dcd7d72ac242598dfff06 # image already contains kubectl; no bootstrap needed
       command: ["/bin/sh", "-c", "sleep infinity"]     # just idle for interactive exec
       resources:
         requests: { cpu: "100m", memory: "128Mi" }
@@ -171,7 +176,7 @@ spec:
   serviceAccountName: red-team-operator
   containers:
     - name: scanner
-      image: docker.io/instrumentisto/nmap:latest      # prebuilt nmap image
+      image: docker.io/instrumentisto/nmap@sha256:9d43d7dced3c713c5063acbbdda7eebade0f8e17ee613aa97706889fb129409b # prebuilt nmap image
       command: ["/bin/sh", "-c", "sleep infinity"]
       resources:
         requests: { cpu: "100m", memory: "64Mi" }
@@ -197,7 +202,7 @@ spec:
   serviceAccountName: red-team-operator
   containers:
     - name: curler
-      image: docker.io/alpine:latest
+      image: docker.io/alpine@sha256:d56c381f961d307a21b3ca004cf1e3910f106644aefb1f43e654c8a56c4fd395
       command: ["/bin/sh", "-c"]
       args:
         # Install HTTP tooling and print a ready-to-run IMDS theft example, then idle.

@@ -32,9 +32,10 @@
 # Prerequisites:
 #   - Az PowerShell module (Install-Module Az)
 #   - Logged in: Connect-AzAccount
-#   - Sufficient permissions: Application Administrator + Owner on subscription
-#     (needed to create the app AND to grant it subscription-scope roles)
-#   - Optional: GitHub CLI `gh` (to push the variables automatically)
+#   - Sufficient permissions: Application Administrator + Owner on the pre-created
+#     lab resource group (needed to create the app and grant RG-scoped roles)
+#   - GitHub CLI `gh`, authenticated to the target repository (to read its OIDC
+#     subject configuration and push the variables automatically)
 # =============================================================================
 
 # CmdletBinding() turns this script into an "advanced function": it gains the
@@ -50,24 +51,22 @@ param(
     [Parameter(Mandatory)]
     [string]$GitHubRepo,
 
-    # Display name of the Azure AD App Registration to create/reuse.
+    # Optional explicit display name of the Azure AD App Registration to create/reuse.
+    # When omitted, the script derives a deterministic tenant/subscription/repository-
+    # specific name after validating the Azure context.
     [Parameter()]
-    [string]$AppName = "sp-aks-adversary-lab-github",
+    [AllowEmptyString()]
+    [string]$AppName,
 
     # Target subscription. Defaults to whatever `Connect-AzAccount` selected.
     [Parameter()]
     [string]$SubscriptionId = (Get-AzContext).Subscription.Id,
 
-    # Resource group the identity will deploy into. If it doesn't exist yet, the
-    # script grants Contributor at subscription scope so deploy time can create it.
+    # Pre-created resource group the identity will deploy into. This script fails
+    # if it does not exist rather than widening the identity to subscription scope.
     [Parameter()]
-    [string]$ResourceGroupName = "rg-aks-adversary-lab",
+    [string]$ResourceGroupName = "rg-aks-adversary-lab"
 
-    # The repo's default branch. ValidateSet restricts input to the two common
-    # names so a typo can't silently produce a credential that never matches.
-    [Parameter()]
-    [ValidateSet("main", "master")]
-    [string]$MainBranch = "main"
 )
 
 # Stop on the first error so a half-configured identity isn't left behind — any
@@ -93,6 +92,89 @@ function Write-Info {
     Write-Host "  · $Message" -ForegroundColor Gray
 }
 
+function Get-DefaultAppName {
+    param(
+        [Parameter(Mandatory)]
+        [string]$TenantId,
+
+        [Parameter(Mandatory)]
+        [string]$SubscriptionId,
+
+        [Parameter(Mandatory)]
+        [string]$GitHubOrg,
+
+        [Parameter(Mandatory)]
+        [string]$GitHubRepo
+    )
+
+    $normalizeNamePart = {
+        param([string]$Value)
+
+        return (($Value.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+    }
+
+    $normalizedOrg = & $normalizeNamePart $GitHubOrg
+    $normalizedRepo = & $normalizeNamePart $GitHubRepo
+    if ([string]::IsNullOrWhiteSpace($normalizedOrg) -or [string]::IsNullOrWhiteSpace($normalizedRepo)) {
+        throw "GitHub organization and repository must contain letters or numbers to derive the default AppName."
+    }
+
+    # The hash prevents display-name collisions when normalized or shortened names
+    # coincide, while retaining the organization and repository for operators.
+    $identity = "$($TenantId.ToLowerInvariant())|$($SubscriptionId.ToLowerInvariant())|$normalizedOrg/$normalizedRepo"
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($identity))
+    } finally {
+        $sha256.Dispose()
+    }
+    $shortHash = (([System.BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvariant()).Substring(0, 12)
+
+    $displayOrg = $normalizedOrg.Substring(0, [Math]::Min($normalizedOrg.Length, 48))
+    $displayRepo = $normalizedRepo.Substring(0, [Math]::Min($normalizedRepo.Length, 80))
+    return "sp-aks-adversary-lab-$displayOrg-$displayRepo-$shortHash"
+}
+
+function Get-GitHubEnvironmentOidcSubject {
+    param(
+        [Parameter(Mandatory)]
+        [string]$GitHubOrg,
+
+        [Parameter(Mandatory)]
+        [string]$GitHubRepo,
+
+        [Parameter(Mandatory)]
+        [string]$EnvironmentName
+    )
+
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "GitHub CLI 'gh' is required to read the target repository's OIDC subject configuration. Install and authenticate gh before running setup."
+    }
+
+    $repository = "$GitHubOrg/$GitHubRepo"
+    $endpoint = "repos/$repository/actions/oidc/customization/sub"
+    $response = & gh api --method GET `
+        --header "Accept: application/vnd.github+json" `
+        $endpoint 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read GitHub OIDC subject configuration for '$repository': $response"
+    }
+
+    try {
+        $configuration = $response | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "GitHub returned an unreadable OIDC subject configuration for '$repository': $response"
+    }
+
+    $subjectPrefix = $configuration.sub_claim_prefix
+    if ([string]::IsNullOrWhiteSpace($subjectPrefix) -or
+        $subjectPrefix -notmatch '^repo:[^\s]+$') {
+        throw "GitHub did not return a usable OIDC sub_claim_prefix for '$repository'. Refusing to assume a subject format; configure or upgrade GitHub OIDC subject customization, then retry."
+    }
+
+    return "${subjectPrefix}:environment:$EnvironmentName"
+}
+
 # ── Validate context ──────────────────────────────────────────────────────────
 # Confirm we're logged in and capture the tenant/subscription we'll federate to.
 # These come from the CURRENT Az session — run Connect-AzAccount first.
@@ -113,6 +195,23 @@ $subscriptionId = $context.Subscription.Id
 Write-Info "Tenant:       $tenantId"
 Write-Info "Subscription: $subscriptionId"
 Write-Info "Account:      $($context.Account.Id)"
+
+if (-not $PSBoundParameters.ContainsKey('AppName')) {
+    $AppName = Get-DefaultAppName `
+        -TenantId $tenantId `
+        -SubscriptionId $subscriptionId `
+        -GitHubOrg $GitHubOrg `
+        -GitHubRepo $GitHubRepo
+    Write-Info "Using derived App Registration name: $AppName"
+} else {
+    Write-Info "Using explicit App Registration name: $AppName"
+}
+
+$githubEnvironmentSubject = Get-GitHubEnvironmentOidcSubject `
+    -GitHubOrg $GitHubOrg `
+    -GitHubRepo $GitHubRepo `
+    -EnvironmentName "lab"
+Write-Info "Using GitHub-declared OIDC subject: $githubEnvironmentSubject"
 
 # ── Create or get App Registration ───────────────────────────────────────────
 # The App Registration is the identity GitHub will impersonate. Its AppId becomes
@@ -157,22 +256,27 @@ if ($existingSp) {
 }
 
 # ── Federated Credentials ─────────────────────────────────────────────────────
-# Three credentials: main branch pushes, PRs, and manual workflow_dispatch
+# The identity can mint a token only from the gated lab environment.
 
 Write-Step "Configuring Federated Credentials (OIDC)"
 
-# SECURITY: no `pull_request` federated credential. This identity holds
-# subscription-scope roles, so a PR-triggered workflow must never be able to mint
-# its token. Deploys run only via the gated `lab` environment (created below).
+# SECURITY: no `push` or `pull_request` federated credential. The deployment
+# identity can mint a token only from the gated `lab` environment.
+$legacyCredential = Get-AzADAppFederatedCredential `
+    -ApplicationObjectId $app.Id `
+    -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq "github-push-main" }
+if ($legacyCredential) {
+    Remove-AzADAppFederatedCredential `
+        -ApplicationObjectId $app.Id `
+        -FederatedCredentialId $legacyCredential.Id | Out-Null
+    Write-Success "Removed legacy push credential: github-push-main"
+}
+
 $federatedCredentials = @(
     @{
-        Name        = "github-push-main"
-        Subject     = "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${MainBranch}"
-        Description = "GitHub Actions — push to $MainBranch"
-    }
-    @{
         Name        = "github-environment-lab"
-        Subject     = "repo:${GitHubOrg}/${GitHubRepo}:environment:lab"
+        Subject     = $githubEnvironmentSubject
         Description = "GitHub Actions — lab environment (deploy/destroy)"
     }
 )
@@ -186,7 +290,21 @@ foreach ($cred in $federatedCredentials) {
         Where-Object { $_.Name -eq $cred.Name }
 
     if ($existing) {
-        Write-Info "Federated credential already exists: $($cred.Name)"
+        if ($existing.Subject -eq $cred.Subject -and
+            $existing.Issuer -eq "https://token.actions.githubusercontent.com" -and
+            $existing.Audiences -contains "api://AzureADTokenExchange") {
+            Write-Info "Federated credential already matches GitHub's declared subject: $($cred.Name)"
+        } else {
+            Update-AzADAppFederatedCredential `
+                -ApplicationObjectId $app.Id `
+                -FederatedCredentialId $existing.Id `
+                -Audience "api://AzureADTokenExchange" `
+                -Issuer "https://token.actions.githubusercontent.com" `
+                -Subject $cred.Subject `
+                -Description $cred.Description | Out-Null
+            Write-Success "Updated federated credential to GitHub's declared subject: $($cred.Name)"
+            Write-Info "  Subject: $($cred.Subject)"
+        }
     } else {
         # The trust rule. Azure AD will exchange a GitHub token for an Azure token
         # only when ALL of these line up:
@@ -208,23 +326,48 @@ foreach ($cred in $federatedCredentials) {
 }
 
 # ── Role Assignments ──────────────────────────────────────────────────────────
-# Grant the Service Principal the Azure RBAC roles it needs to deploy the lab.
-# Scope is chosen carefully: prefer the resource group, but fall back to the
-# subscription where the Bicep genuinely needs it (policy + role assignments).
+# Grant the Service Principal only the Azure RBAC roles it needs inside the
+# pre-created lab resource group. Subscription-scoped setup stays with the
+# bootstrap administrator and is never granted to the OIDC identity.
 
 Write-Step "Assigning roles"
 
-# If the target RG already exists, scope Contributor to it (least privilege). If
-# not, the identity must be able to CREATE the RG, which requires subscription
-# scope — so we widen the Contributor scope accordingly.
 $rg = Get-AzResourceGroup -Name $ResourceGroupName -ErrorAction SilentlyContinue
 if (-not $rg) {
-    Write-Info "Resource group '$ResourceGroupName' not found — it will be created at deploy time"
-    Write-Info "Assigning Contributor at subscription scope instead (needed to create the RG)"
-    $rgScope = "/subscriptions/$subscriptionId"
-} else {
-    $rgScope = $rg.ResourceId
+    throw "Resource group '$ResourceGroupName' does not exist. A bootstrap administrator must create it before configuring the deployment identity."
 }
+$rgScope = $rg.ResourceId
+
+# Bicep needs to create only these four role assignments. The condition below
+# applies to both write and delete so UAA cannot grant or retain a broader role.
+$permittedRoleDefinitionIds = @(
+    '7f951dda-4ed3-4680-a7ca-43fe172d538d' # AcrPull
+    '749f88d5-cbae-40b8-bcfc-e573ddc772fa' # Monitoring Contributor
+    '92aaf0da-9dab-42b6-94a3-d43ce8d16293' # Log Analytics Contributor
+    'b24988ac-6180-42a0-ab88-20f7382dd24c' # Contributor
+)
+$permittedRoleDefinitionIdsCondition = $permittedRoleDefinitionIds -join ', '
+$uaaCondition = @"
+(
+    (
+        !(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})
+    )
+    OR
+    (
+        @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$permittedRoleDefinitionIdsCondition}
+    )
+)
+AND
+(
+    (
+        !(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})
+    )
+    OR
+    (
+        @Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$permittedRoleDefinitionIdsCondition}
+    )
+)
+"@
 
 $roleAssignments = @(
     @{
@@ -233,17 +376,9 @@ $roleAssignments = @(
         Description = "Deploy/manage lab resources in resource group"
     }
     @{
-        # HARDENING CANDIDATE (see security-exceptions.yaml LAB-004): subscription-scope
-        # UAA is Owner-equivalent for role grants. Kept because the Bicep creates role
-        # assignments during deploy; replace with a scoped custom role when practical.
-        Role        = "User Access Administrator"
-        Scope       = "/subscriptions/$subscriptionId"
-        Description = "Required for policy assignments and role assignments in Bicep"
-    }
-    @{
         Role        = "Resource Policy Contributor"
-        Scope       = "/subscriptions/$subscriptionId"
-        Description = "Required to deploy custom policy definitions and initiatives"
+        Scope       = $rgScope
+        Description = "Required for the lab resource-group policy assignment"
     }
 )
 
@@ -270,6 +405,66 @@ foreach ($assignment in $roleAssignments) {
     }
 }
 
+# Converge legacy unconditional UAA assignments instead of treating them as
+# idempotent. A single matching condition is retained; every other assignment is
+# removed before the constrained replacement is created.
+$existingUaaAssignments = @(Get-AzRoleAssignment `
+    -ObjectId $sp.Id `
+    -RoleDefinitionName "User Access Administrator" `
+    -Scope $rgScope `
+    -ErrorAction SilentlyContinue)
+$matchingUaaAssignments = @($existingUaaAssignments | Where-Object {
+    $_.Condition -eq $uaaCondition -and $_.ConditionVersion -eq "2.0"
+})
+
+if ($existingUaaAssignments.Count -eq 1) {
+    if ($matchingUaaAssignments.Count -eq 1) {
+        Write-Info "Conditional User Access Administrator already assigned @ $rgScope"
+    } else {
+        $legacyUaaAssignment = $existingUaaAssignments[0]
+        $legacyUaaAssignment.Condition = $uaaCondition
+        $legacyUaaAssignment.ConditionVersion = "2.0"
+        $legacyUaaAssignment.Description = "Can manage only Bicep-required role assignments in the lab resource group"
+        Set-AzRoleAssignment -InputObject $legacyUaaAssignment | Out-Null
+        Write-Success "Updated legacy User Access Administrator to the conditional boundary"
+    }
+} else {
+    foreach ($existingUaaAssignment in $existingUaaAssignments) {
+        Remove-AzRoleAssignment -InputObject $existingUaaAssignment | Out-Null
+        Write-Info "Removed legacy or non-matching User Access Administrator assignment"
+    }
+
+    New-AzRoleAssignment `
+        -ObjectId $sp.Id `
+        -RoleDefinitionName "User Access Administrator" `
+        -Scope $rgScope `
+        -Condition $uaaCondition `
+        -ConditionVersion "2.0" `
+        -Description "Can manage only Bicep-required role assignments in the lab resource group" | Out-Null
+    Write-Success "Conditional User Access Administrator"
+    Write-Info "  Scope: $rgScope"
+    Write-Info "  Permitted role definition IDs: $permittedRoleDefinitionIdsCondition"
+}
+
+# Kubernetes manifest deployment requires an Azure RBAC data-plane role. Grant it
+# directly during bootstrap so the OIDC identity never self-assigns this role.
+$aksRbacClusterAdminRoleDefinitionId = "b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b"
+$existingAksRbacClusterAdmin = Get-AzRoleAssignment `
+    -ObjectId $sp.Id `
+    -RoleDefinitionId $aksRbacClusterAdminRoleDefinitionId `
+    -Scope $rgScope `
+    -ErrorAction SilentlyContinue
+if ($existingAksRbacClusterAdmin) {
+    Write-Info "Azure Kubernetes Service RBAC Cluster Admin already assigned @ $rgScope"
+} else {
+    New-AzRoleAssignment `
+        -ObjectId $sp.Id `
+        -RoleDefinitionId $aksRbacClusterAdminRoleDefinitionId `
+        -Scope $rgScope | Out-Null
+    Write-Success "Azure Kubernetes Service RBAC Cluster Admin"
+    Write-Info "  Scope: $rgScope"
+}
+
 # ── Output GitHub Secrets ─────────────────────────────────────────────────────
 # These three values wire the workflow to this identity. Note they aren't
 # sensitive — with OIDC there's no password to protect; a client id is useless
@@ -294,29 +489,19 @@ foreach ($secret in $secrets) {
 
 Write-Host ""
 
-# ── Optional: GitHub CLI auto-set ────────────────────────────────────────────
-# Convenience: if the GitHub CLI is installed and authenticated, push the three
-# values straight into the repo so the user doesn't have to copy them by hand.
+# ── GitHub CLI secret setup ──────────────────────────────────────────────────
+# GitHub CLI was already required to read the target repository's OIDC subject
+# configuration, so use the same authenticated CLI session to set the identifiers.
 
 Write-Step "Attempting to set secrets via GitHub CLI (gh)"
 
-# Get-Command returns null (not an error) when gh isn't on PATH.
-$ghInstalled = Get-Command gh -ErrorAction SilentlyContinue
-
-if ($ghInstalled) {
-    Write-Info "gh CLI found — setting secrets automatically"
-
-    foreach ($secret in $secrets) {
-        gh secret set $secret.Name --body $secret.Value --repo "$GitHubOrg/$GitHubRepo"
-        Write-Success "Set: $($secret.Name)"
-    }
-
-    Write-Host ""
-    Write-Success "All secrets configured via gh CLI"
-} else {
-    Write-Host "  gh CLI not found — copy the values above into GitHub manually" -ForegroundColor Yellow
-    Write-Host "  Install: https://cli.github.com" -ForegroundColor Gray
+foreach ($secret in $secrets) {
+    gh secret set $secret.Name --body $secret.Value --repo "$GitHubOrg/$GitHubRepo"
+    Write-Success "Set: $($secret.Name)"
 }
+
+Write-Host ""
+Write-Success "All secrets configured via gh CLI"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 

@@ -30,7 +30,7 @@ on:
           - deploy
           - destroy
       name_prefix:
-        description: 'Resource name prefix (lowercase, 3-15 chars, e.g. purpleshell)'
+        description: 'Prefix for the pre-created rg-<prefix>-aks-lab resource group (lowercase, 3-15 chars)'
         required: true
         type: string
       location:
@@ -74,16 +74,26 @@ permissions:
   id-token: write
   contents: read
 
-# ── Workflow-wide variable ───────────────────────────────────────────────────
-# Derived once from name_prefix so every job/step names the RG identically.
+# ── Workflow-wide inputs ─────────────────────────────────────────────────────
+# workflow_dispatch values are untrusted. Pass them through the process
+# environment and validate them before Azure login; never interpolate them into
+# a shell script. NAME_PREFIX derives the pre-created resource group to which the
+# deployment identity is restricted.
 env:
+  ACTION: ${{ github.event.inputs.action }}
+  NAME_PREFIX: ${{ github.event.inputs.name_prefix }}
+  LOCATION: ${{ github.event.inputs.location }}
+  AUTHORIZED_IP: ${{ github.event.inputs.authorized_ip }}
+  ADMIN_GROUP_ID: ${{ github.event.inputs.admin_group_id }}
+  EXISTING_WORKSPACE_ID: ${{ github.event.inputs.existing_workspace_id }}
+  DEPLOYER: ${{ github.actor }}
   RESOURCE_GROUP: rg-${{ github.event.inputs.name_prefix }}-aks-lab
 
 jobs:
   # ── Job 1 of 3: preflight ──────────────────────────────────────────────────
   # ALWAYS runs first. Validates the form inputs and confirms Azure access BEFORE
-  # spending 15+ minutes on a deploy. Steps 1-3 need no cloud (pure input checks);
-  # steps 4-6 do a cheap Azure round-trip. Nothing is created here.
+  # spending 15+ minutes on a deploy. It also confirms that the bootstrap
+  # administrator pre-created the derived resource group. Nothing is created here.
   # `environment: lab` gates the job behind the lab environment's approval and
   # scopes the OIDC credential.
   preflight:
@@ -96,12 +106,34 @@ jobs:
 
       - name: Validate name prefix
         run: |
-          PREFIX="${{ github.event.inputs.name_prefix }}"
+          PREFIX="$NAME_PREFIX"
           if [[ ! "$PREFIX" =~ ^[a-z][a-z0-9]{2,14}$ ]]; then
             echo "::error::name_prefix must be 3-15 lowercase alphanumeric chars starting with a letter. Got: $PREFIX"
             exit 1
           fi
           echo "✓ Name prefix valid: $PREFIX"
+
+      - name: Validate action and location
+        run: |
+          if [[ "$ACTION" != "deploy" && "$ACTION" != "destroy" ]]; then
+            echo "::error::action must be deploy or destroy."
+            exit 1
+          fi
+          case "$LOCATION" in
+            eastus|eastus2|westus2|centralus|uksouth|westeurope) ;;
+            *)
+              echo "::error::location is not an allowed Azure region: $LOCATION"
+              exit 1
+              ;;
+          esac
+
+      - name: Validate Entra admin group object ID
+        run: |
+          if [[ ! "$ADMIN_GROUP_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo "::error::admin_group_id must be an Entra object-ID UUID."
+            exit 1
+          fi
+          echo "✓ Entra admin group object ID is valid"
 
       # authorized_ip becomes the AKS API server's allowlist, so it MUST be your
       # real PUBLIC IP. This step checks CIDR shape, rejects octets > 255, and
@@ -109,7 +141,7 @@ jobs:
       # reserved) — a private IP here would lock you out or be meaningless.
       - name: Validate IP range
         run: |
-          IP="${{ github.event.inputs.authorized_ip }}"
+          IP="$AUTHORIZED_IP"
 
           if [[ ! "$IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
             echo "::error::authorized_ip must be in CIDR format (e.g. 73.45.123.45/32). Got: $IP"
@@ -155,9 +187,9 @@ jobs:
       # Log Analytics resource ID. nocasematch handles Azure's inconsistent casing
       # (resourceGroups vs resourcegroups).
       - name: Validate existing workspace ID format
-        if: github.event.inputs.existing_workspace_id != ''
+        if: env.EXISTING_WORKSPACE_ID != ''
         run: |
-          WS="${{ github.event.inputs.existing_workspace_id }}"
+          WS="$EXISTING_WORKSPACE_ID"
           shopt -s nocasematch
           if [[ ! "$WS" =~ ^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\.operationalinsights/workspaces/[^/]+$ ]]; then
             echo "::error::existing_workspace_id is not a valid resource ID."
@@ -167,7 +199,7 @@ jobs:
           fi
           shopt -u nocasematch
           echo "✓ Existing workspace ID valid"
-          echo "  Using workspace: $(echo $WS | awk -F'/' '{print $NF}')"
+          echo "  Using workspace: ${WS##*/}"
 
       # First real cloud contact — OIDC login, no stored password (see header).
       - name: Azure login
@@ -183,10 +215,19 @@ jobs:
           az account show --query "{subscription:name, id:id, tenant:tenantId}" -o table
           echo "✓ Azure login successful"
 
-      - name: Verify existing workspace exists
-        if: github.event.inputs.existing_workspace_id != ''
+      - name: Verify pre-created lab resource group
         run: |
-          WS_ID="${{ github.event.inputs.existing_workspace_id }}"
+          if ! az group show --name "$RESOURCE_GROUP" --query "id" -o tsv >/dev/null; then
+            echo "::error::Required lab resource group does not exist: $RESOURCE_GROUP"
+            echo "::error::A bootstrap administrator must create it and assign the deployment identity its resource-group-scoped roles before deployment."
+            exit 1
+          fi
+          echo "✓ Pre-created lab resource group verified: $RESOURCE_GROUP"
+
+      - name: Verify existing workspace exists
+        if: env.EXISTING_WORKSPACE_ID != ''
+        run: |
+          WS_ID="$EXISTING_WORKSPACE_ID"
           RESULT=$(az resource show --ids "$WS_ID" --query "name" -o tsv 2>&1) || {
             echo "::error::Existing workspace not found or not accessible: $WS_ID"
             exit 1
@@ -227,8 +268,8 @@ jobs:
 
       - name: Workspace mode
         run: |
-          if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
-            WS_NAME=$(echo "${{ github.event.inputs.existing_workspace_id }}" | awk -F'/' '{print $NF}')
+          if [ -n "$EXISTING_WORKSPACE_ID" ]; then
+            WS_NAME="${EXISTING_WORKSPACE_ID##*/}"
             echo "📋 Using existing workspace: $WS_NAME"
             echo "   (activity log forwarding will be skipped — assumed already configured)"
           else
@@ -236,17 +277,10 @@ jobs:
             echo "   (activity log forwarding will be enabled)"
           fi
 
-      - name: Create resource group
+      - name: Confirm pre-created resource group
         run: |
-          az group create \
-            --name "${{ env.RESOURCE_GROUP }}" \
-            --location "${{ github.event.inputs.location }}" \
-            --tags \
-              Environment=SecurityLab \
-              Project=AKS-Adversary-Lab \
-              DeployedBy="${{ github.actor }}" \
-              DeployedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "✓ Resource group ready: ${{ env.RESOURCE_GROUP }}"
+          echo "Using bootstrap-created resource group: $RESOURCE_GROUP"
+          echo "The OIDC deployment identity is intentionally not permitted to create or delete resource groups."
 
       # The big one: AKS cluster, ACR, Key Vault, Log Analytics, networking,
       # policies. `id: bicep` + writing to $GITHUB_OUTPUT below exports the
@@ -256,19 +290,19 @@ jobs:
         id: bicep
         run: |
           PARAMS=(
-            namePrefix="${{ github.event.inputs.name_prefix }}"
-            location="${{ github.event.inputs.location }}"
-            adminGroupObjectId="${{ github.event.inputs.admin_group_id }}"
-            authorizedIpRange="${{ github.event.inputs.authorized_ip }}"
+            namePrefix="$NAME_PREFIX"
+            location="$LOCATION"
+            adminGroupObjectId="$ADMIN_GROUP_ID"
+            authorizedIpRange="$AUTHORIZED_IP"
           )
 
-          if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
-            PARAMS+=(existingWorkspaceResourceId="${{ github.event.inputs.existing_workspace_id }}")
+          if [ -n "$EXISTING_WORKSPACE_ID" ]; then
+            PARAMS+=(existingWorkspaceResourceId="$EXISTING_WORKSPACE_ID")
           fi
 
           OUTPUT=$(az deployment group create \
             --name "aks-lab-$(date +%s)" \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --template-file infrastructure/main.bicep \
             --parameters "${PARAMS[@]}" \
             --query "properties.outputs" -o json)
@@ -284,28 +318,6 @@ jobs:
 
           echo "✓ Main stack deployed"
 
-      # A SECOND, separate Bicep deploy at SUBSCRIPTION scope (not RG scope) for
-      # things that live above the resource group: Defender for Cloud plans and
-      # activity-log forwarding. Forwarding is only enabled when creating a NEW
-      # workspace (if you brought your own, it assumes that's already wired up).
-      - name: Deploy subscription-scope resources
-        run: |
-          if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
-            ENABLE_ACTIVITY_LOG="false"
-          else
-            ENABLE_ACTIVITY_LOG="true"
-          fi
-
-          az deployment sub create \
-            --name "aks-lab-sub-$(date +%s)" \
-            --location "${{ github.event.inputs.location }}" \
-            --template-file infrastructure/main_subscription.bicep \
-            --parameters \
-              logAnalyticsWorkspaceId="${{ steps.bicep.outputs.workspace_id }}" \
-              enableActivityLogForwarding="$ENABLE_ACTIVITY_LOG" \
-            --query "properties.provisioningState" -o tsv
-          echo "✓ Subscription-scope resources deployed"
-
       # The Bicep locked the API server to YOUR authorized_ip, but this GitHub
       # runner has a different IP and needs kubectl access. So: discover the
       # runner's public IP and APPEND it to the allowlist (note the trailing
@@ -319,23 +331,33 @@ jobs:
           echo "ip=$RUNNER_IP" >> $GITHUB_OUTPUT
 
           CURRENT_RANGES=$(az aks show \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --name "${{ steps.bicep.outputs.cluster_name }}" \
             --query "apiServerAccessProfile.authorizedIpRanges" -o tsv | tr '\n' ',' | sed 's/,$//')
 
           NEW_RANGES="${CURRENT_RANGES},${RUNNER_IP}/32"
 
           az aks update \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --name "${{ steps.bicep.outputs.cluster_name }}" \
             --api-server-authorized-ip-ranges "$NEW_RANGES"
 
           echo "✓ Runner IP added to allowlist (will be removed at end of job)"
 
+      # The Bicep deployment can outlive the short-lived OIDC access token from
+      # the job's initial login. Refresh it only after the long-running Azure
+      # operations and immediately before Azure CLI/kubelogin access to AKS.
+      - name: Refresh Azure login before AKS access
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Get AKS credentials
         run: |
           az aks get-credentials \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --name "${{ steps.bicep.outputs.cluster_name }}" \
             --overwrite-existing
           kubelogin convert-kubeconfig -l azurecli
@@ -370,8 +392,7 @@ jobs:
             --namespace monitoring \
             --create-namespace \
             --wait \
-            --timeout 10m \
-            || echo "⚠️  Falco install timed out — check 'kubectl get pods -n monitoring' after deploy"
+            --timeout 10m
           echo "✓ Falco deployment step complete"
 
       - name: Apply monitoring resources
@@ -403,7 +424,7 @@ jobs:
           fi
           echo ""
           echo "  Connect:"
-          echo "  az aks get-credentials --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ steps.bicep.outputs.cluster_name }}"
+          echo "  az aks get-credentials --resource-group $RESOURCE_GROUP --name ${{ steps.bicep.outputs.cluster_name }}"
           echo "  kubelogin convert-kubeconfig -l azurecli"
           echo ""
           kubectl get pods -A --field-selector=status.phase=Running 2>/dev/null | head -30
@@ -415,20 +436,19 @@ jobs:
       - name: Remove runner IP from AKS allowlist
         if: always() && steps.runner_ip.outputs.ip != ''
         run: |
-          ORIGINAL_RANGES="${{ github.event.inputs.authorized_ip }}"
+          ORIGINAL_RANGES="$AUTHORIZED_IP"
           az aks update \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --name "${{ steps.bicep.outputs.cluster_name }}" \
             --api-server-authorized-ip-ranges "$ORIGINAL_RANGES" \
             || echo "⚠️  Failed to restore allowlist — may need manual cleanup"
           echo "✓ Allowlist restored to original ($ORIGINAL_RANGES)"
 
   # ── Job 3 of 3: destroy ────────────────────────────────────────────────────
-  # Runs ONLY if action == 'destroy'. It's more than one `az group delete` because
-  # two things fight a naive delete: (1) the AKS node RG has a ReadOnly lock — see
-  # the comment on the cluster-delete step below — and (2) a subscription-scope
-  # policy assignment lives ABOVE the RG and survives its deletion. This job
-  # handles both, in the right order, and is safe to re-run (idempotent).
+  # Runs ONLY if action == 'destroy'. The OIDC deployment identity is restricted
+  # to resources inside the pre-created lab resource group, so it never deletes
+  # that group. It deletes the AKS cluster and the resource-group-scoped policy
+  # assignment; the bootstrap administrator removes the group after teardown.
   destroy:
     name: Destroy lab
     runs-on: ubuntu-latest
@@ -448,10 +468,11 @@ jobs:
 
       - name: Confirm target
         run: |
-          echo "⚠️  About to delete resource group: ${{ env.RESOURCE_GROUP }}"
-          echo "    Triggered by: ${{ github.actor }}"
-          if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
-            WS_NAME=$(echo "${{ github.event.inputs.existing_workspace_id }}" | awk -F'/' '{print $NF}')
+          echo "⚠️  About to tear down lab resources in: $RESOURCE_GROUP"
+          echo "    Triggered by: $DEPLOYER"
+          echo "    The resource group will be retained for the bootstrap administrator."
+          if [ -n "$EXISTING_WORKSPACE_ID" ]; then
+            WS_NAME="${EXISTING_WORKSPACE_ID##*/}"
             echo "    ℹ️  Existing workspace '$WS_NAME' will NOT be deleted"
           fi
 
@@ -459,21 +480,20 @@ jobs:
       # AKS auto-creates a node resource group with `restrictionLevel: 'ReadOnly'`,
       # which adds a deny assignment that blocks deletion of node-RG resources by
       # anyone other than AKS itself. Deleting the cluster first lets AKS dismantle
-      # the node RG cleanly. Skipping this causes az group delete to fail with:
-      #   DenyAssignmentAuthorizationFailed: kubernetes.azure.com/.../nrg-lockdown
+      # the node RG cleanly.
       - name: Delete AKS cluster (synchronous — triggers node RG cleanup)
         run: |
           # Find the cluster in the lab RG (handles cases where name_prefix
           # differs across deploys, RG was partially created, etc.)
           CLUSTER_NAME=$(az aks list \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --query "[0].name" -o tsv 2>/dev/null || echo "")
 
           if [ -n "$CLUSTER_NAME" ] && [ "$CLUSTER_NAME" != "null" ]; then
             echo "Deleting AKS cluster: $CLUSTER_NAME"
             echo "(This also removes the auto-managed node RG via AKS — typically 5-10 min)"
             az aks delete \
-              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --resource-group "$RESOURCE_GROUP" \
               --name "$CLUSTER_NAME" \
               --yes
             echo "✓ Cluster deleted, node RG cleaned up by AKS"
@@ -481,38 +501,21 @@ jobs:
             echo "· No AKS cluster found in RG — skipping cluster delete"
           fi
 
-      - name: Delete resource group
+      # The policy assignment is scoped to the lab resource group. Remove only
+      # that scoped assignment; do not enumerate or delete assignments elsewhere
+      # in the subscription.
+      - name: Delete lab policy assignment
         run: |
-          EXISTS=$(az group exists --name "${{ env.RESOURCE_GROUP }}")
-          if [ "$EXISTS" = "true" ]; then
-            az group delete \
-              --name "${{ env.RESOURCE_GROUP }}" \
-              --yes \
-              --no-wait
-            echo "✓ Delete initiated: ${{ env.RESOURCE_GROUP }}"
-            echo "  Resources are being removed asynchronously (~5-10 min)"
+          if az policy assignment show \
+            --name aks-lab-mitre-logging \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "id" -o tsv >/dev/null 2>&1; then
+            az policy assignment delete \
+              --name aks-lab-mitre-logging \
+              --resource-group "$RESOURCE_GROUP"
+            echo "✓ Removed resource-group-scoped policy assignment"
           else
-            echo "· Resource group not found — already deleted or never created"
-          fi
-
-      # The 'aks-lab-mitre-logging' policy assignment lives at SUBSCRIPTION scope,
-      # above the RG, so deleting the RG doesn't remove it. Without this cleanup,
-      # repeated deploy/destroy cycles would leave dangling policy assignments.
-      - name: Clean up orphaned policy assignments
-        run: |
-          echo "Checking for orphaned subscription-scope policy assignments..."
-          ASSIGNMENTS=$(az policy assignment list \
-            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --query "[?name=='aks-lab-mitre-logging'].id" \
-            -o tsv)
-
-          if [ -n "$ASSIGNMENTS" ]; then
-            echo "$ASSIGNMENTS" | while read ID; do
-              az policy assignment delete --id "$ID"
-              echo "  Deleted: $ID"
-            done
-          else
-            echo "  None found"
+            echo "· No lab policy assignment found — skipping"
           fi
 
       - name: Destroy summary
@@ -522,12 +525,14 @@ jobs:
           echo "  AKS Adversary Lab — Destroyed"
           echo "════════════════════════════════════════════════════════"
           echo ""
-          echo "  Resource group deletion initiated: ${{ env.RESOURCE_GROUP }}"
+          echo "  Resource group retained: $RESOURCE_GROUP"
+          echo "  Bootstrap administrator action required:"
+          echo "    Review remaining resources, then delete the now-empty resource group."
           echo ""
-          echo "  The following are NOT removed and persist at subscription scope:"
+          echo "  The following are not removed by this workflow:"
           echo "    · Defender for Cloud pricing tiers"
           echo "    · Custom policy definitions"
-          if [ -n "${{ github.event.inputs.existing_workspace_id }}" ]; then
+          if [ -n "$EXISTING_WORKSPACE_ID" ]; then
             echo "    · Log Analytics workspace (was pre-existing, intentionally preserved)"
           fi
           echo ""

@@ -19,9 +19,9 @@
 //   resource group or subscription). The variables below compute the right
 //   workspace ID/name/location once and reuse them everywhere.
 //
-//   NOTE: subscription-scoped controls (Defender plans, activity-log
-//   forwarding) live in the separate main_subscription.bicep because a Bicep
-//   file has a single target scope.
+//   NOTE: subscription-scoped controls and the custom Azure Policy definitions
+//   are provisioned separately by a bootstrap administrator. This RG-scoped
+//   deployment only assigns the pre-provisioned policy initiative.
 // ============================================================================
 
 targetScope = 'resourceGroup'
@@ -35,6 +35,12 @@ param location string = resourceGroup().location
 @minLength(3)
 @maxLength(15)
 param namePrefix string
+
+// The bootstrap administrator provisions this subscription-scoped initiative
+// before running the lab deployment. Keeping its stable ID as a parameter avoids
+// a nested subscription deployment from the RG-scoped OIDC workflow.
+@description('Resource ID of the pre-provisioned Azure Policy initiative')
+param policyInitiativeId string = subscriptionResourceId('Microsoft.Authorization/policySetDefinitions', 'aks-adversary-lab-logging-initiative')
 
 // The Entra group whose members receive Kubernetes cluster-admin (via Azure
 // RBAC). This is the human access boundary for the whole cluster.
@@ -268,19 +274,12 @@ module detectionT1098006 '../detections/T1098.006-cluster-role-binding/rule.bice
 // Azure Policy definitions + assignment that codify the lab's compliance
 // guardrails and feed compliance state alongside the detections.
 
-// Policy DEFINITIONS/initiative live at SUBSCRIPTION scope (that's where custom
-// policy/initiative definitions must be created), hence the explicit scope.
-module aksPolicyDefs 'modules/aks_policy_defs.bicep' = {
-  name: 'deploy-aks-policy-defs'
-  scope: subscription()
-}
-
-// Policy ASSIGNMENT (resource-group scoped) that binds the initiative above to
-// this RG and routes compliance data to the resolved workspace.
+// Policy ASSIGNMENT (resource-group scoped) binds the bootstrap-provisioned
+// initiative to this RG and routes compliance data to the resolved workspace.
 module aksPolicy 'modules/aks_policy.bicep' = {
   name: 'deploy-aks-policy'
   params: {
-    initiativeId: aksPolicyDefs.outputs.initiativeId
+    initiativeId: policyInitiativeId
     logAnalyticsWorkspaceId: resolvedWorkspaceId
   }
 }

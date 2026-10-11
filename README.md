@@ -74,6 +74,7 @@ aks-adversary-lab/
 │
 ├── tools/
 │   ├── setup-oidc.ps1             # One-time OIDC setup for GitHub Actions
+│   ├── bootstrap-policy-definitions.ps1 # Bootstrap-admin subscription policy provisioning
 │   └── detection-validator/       # Python tool — validates KQL + Falco rule structure
 │
 └── docs/
@@ -86,7 +87,10 @@ aks-adversary-lab/
 
 ## CI/CD Pipeline
 
-Every pull request and push to `main` runs `validate.yaml` automatically. The deploy workflow is always manual — nothing deploys to Azure without you clicking a button.
+Every pull request and push to `main` runs `validate.yaml` automatically. You
+can also manually run it for an orphan release-candidate branch that has no PR;
+it remains CI-only and never accesses Azure. The deploy workflow is always
+manual — nothing deploys to Azure without you clicking a button.
 
 > 📖 **New to these workflows?** [`docs/WORKFLOWS-EXPLAINED.md`](docs/WORKFLOWS-EXPLAINED.md) is a line-by-line walkthrough of both workflow files — triggers, jobs, the OIDC auth model, deploy/destroy ordering, and the patterns behind them. The workflow YAML files themselves also carry inline explanatory comments.
 
@@ -106,7 +110,12 @@ Every pull request and push to `main` runs `validate.yaml` automatically. The de
 
 ### Deploy Workflow (`deploy.yaml`)
 
-Triggered manually via `workflow_dispatch`. Presents a form with inputs, runs preflight validation, then deploys or destroys the full stack in the correct order.
+Triggered manually via `workflow_dispatch`. Every form value is passed to Bash
+through an environment variable and validated before Azure login; the workflow
+then deploys or destroys the full stack in the correct order. Falco must install
+successfully before monitoring, victim, or red-team workloads are applied. The
+temporary runner API allowlist entry is still attempted for removal even when a
+deployment step fails.
 
 ---
 
@@ -121,13 +130,28 @@ Triggered manually via `workflow_dispatch`. Presents a form with inputs, runs pr
 | Azure CLI | `winget install Microsoft.AzureCLI` / `brew install azure-cli` |
 | kubectl | `az aks install-cli` |
 | Helm | `winget install Helm.Helm` / `brew install helm` |
-| gh CLI *(optional)* | `winget install GitHub.cli` / `brew install gh` — auto-sets GitHub secrets |
+| gh CLI | `winget install GitHub.cli` / `brew install gh` — setup reads the repository's OIDC subject configuration and sets GitHub secrets |
 
-### Azure Requirements
+### Azure Identities and Scope
 
-- Azure subscription where you have **Owner** or **Contributor + User Access Administrator**
-- Permission to create resources at **subscription scope** (policy definitions, Defender pricing)
-- An **Entra ID security group** whose members will get `cluster-admin` on the AKS cluster
+Use two separate identities:
+
+- **Bootstrap administrator:** an interactive administrator with the
+  subscription permissions required to create the lab resource group, configure
+  subscription-scoped policy definitions/Defender controls, and remove the
+  resource group after teardown.
+- **GitHub Actions deployment identity:** the OIDC service principal used by
+  `deploy.yaml`. It receives Contributor, Resource Policy Contributor, and
+  Azure Kubernetes Service RBAC Cluster Admin
+  (`b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b`) only at the single pre-created lab
+  resource group. Its User Access Administrator assignment is condition version
+  `2.0` constrained to role-assignment writes and deletes for only the AcrPull,
+  Monitoring Contributor, Log Analytics Contributor, and Contributor definitions
+  required by Bicep. It cannot grant Owner, create/delete resource groups, or
+  manage subscription-scoped resources.
+
+The bootstrap administrator also needs an **Entra ID security group** whose
+members will get `cluster-admin` on the AKS cluster.
 
 ---
 
@@ -135,7 +159,52 @@ Triggered manually via `workflow_dispatch`. Presents a form with inputs, runs pr
 
 This is the primary path. One-time setup, then spin up and down with a button click.
 
-### Step 1 — OIDC Setup (run once)
+### Tenant-neutral deployment quick start
+
+Use this sequence for **your own fork or published copy** of the repository. It
+does not provision a shared tenant, subscription, GitHub Environment, or
+credentials for you.
+
+1. Fork or publish the repository in the GitHub organization that will run the
+   lab, then merge the deployment revision into the protected branch you intend
+   to deploy from.
+2. In your Entra tenant, choose or create a dedicated security group for AKS
+   lab administrators. Add only the people who should receive AKS
+   `cluster-admin`, and retain its **object ID** for `admin_group_id`.
+3. As the bootstrap administrator, choose a lowercase `name_prefix` and
+   pre-create `rg-<name_prefix>-aks-lab` in an allowed workflow region. The
+   GitHub Actions identity cannot create this resource group.
+4. As the bootstrap administrator, run
+   [`tools/bootstrap-policy-definitions.ps1`](tools/bootstrap-policy-definitions.ps1)
+   once for the subscription to retain the custom policy definitions and
+   `aks-adversary-lab-logging-initiative`.
+5. Run [`tools/setup-oidc.ps1`](tools/setup-oidc.ps1) with **your** GitHub
+   organization, repository, subscription, and pre-created resource group. It
+   creates/reuses the deployment identity and configures its
+   resource-group-scoped permissions.
+6. In **your repository's GitHub settings**, create/protect the `lab`
+   Environment, add the required reviewer(s), permit the intended deployment
+   branch, and add the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and
+   `AZURE_SUBSCRIPTION_ID` values produced by the OIDC setup.
+7. From that permitted branch, manually dispatch **Deploy AKS Adversary Lab**
+   with the selected prefix, region, public IPv4 CIDR, and Entra group object
+   ID. Approve the `lab` Environment deployment before Azure login.
+8. When finished, manually dispatch `destroy` with the same inputs. It removes
+   the AKS cluster and lab policy assignment, but retains the resource group;
+   the bootstrap administrator reviews remaining resources and removes the
+   now-empty group.
+
+**Customer-specific, external configuration:** the Azure subscription and
+bootstrap-administrator credentials, Entra group membership, GitHub Environment
+reviewers and plan support, permitted deployment branches, and OIDC identifier
+values all belong to your tenant or repository. None is committed to the fork.
+Required-reviewer protection is a GitHub plan capability; if the plan does not
+support it, do not treat the Environment as an approval gate.
+
+The detailed sections below explain the scripts and GitHub settings used in
+steps 4–7.
+
+### OIDC setup details (run once)
 
 From your local machine, logged into Azure:
 
@@ -143,22 +212,96 @@ From your local machine, logged into Azure:
 Connect-AzAccount
 
 ./tools/setup-oidc.ps1 `
-  -GitHubOrg  "purpleshellsecurity" `
-  -GitHubRepo "aks-adversary-lab"
+  -GitHubOrg  "<your-github-org>" `
+  -GitHubRepo "<your-repository>" `
+  -ResourceGroupName "rg-<name_prefix>-aks-lab"
 ```
 
 The script:
-- Creates an App Registration with a federated credential (no client secrets)
-- Assigns the required roles at subscription and resource group scope
-- Sets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` as GitHub secrets — automatically if `gh` CLI is installed, otherwise prints values to copy manually
+- Creates/reuses a deterministic App Registration with a federated credential
+  (no client secrets). When `-AppName` is omitted, its display name contains
+  normalized GitHub organization/repository text and a 12-character SHA-256
+  prefix derived from the tenant ID, subscription ID, and normalized
+  `organization/repository`, preventing reuse of a generic identity between
+  independent deployments.
+- Requires the lab resource group to exist and assigns the deployment identity
+  only the required resource-group-scoped roles
+- Sets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` as GitHub secrets through the required authenticated `gh` CLI
 
-### Step 2 — Create GitHub Environment
+Before creating or updating the federated credential, the script reads the
+target repository's GitHub OIDC subject-customization API through authenticated
+`gh`. It uses GitHub's returned `sub_claim_prefix` plus `:environment:lab`,
+rather than assuming a name-based or ID-based subject format. If GitHub cannot
+provide that authoritative prefix, setup stops without creating or changing the
+federated credential. On rerun, a credential with the same name but a different
+subject is updated to the GitHub-declared value.
+
+Pass `-AppName "<your-approved-name>"` only when your tenant's naming policy
+requires an explicit display name; that exact value is then reused on later
+runs. The derivation inputs are identifiers, not secrets, and are not committed.
+
+Before running the script, the bootstrap administrator must complete the
+resource-group and policy-bootstrap steps above. Subscription-scoped controls
+remain the bootstrap administrator's responsibility and are not deployed by
+the GitHub Actions identity.
+
+### Policy bootstrap details (run once per subscription)
+
+Using the bootstrap administrator's own Azure credentials, provision the custom
+policy definitions and `aks-adversary-lab-logging-initiative` before running the
+lab deploy workflow:
+
+```powershell
+Connect-AzAccount
+
+./tools/bootstrap-policy-definitions.ps1 `
+  -SubscriptionId "<subscription-id>" `
+  -Location "eastus2"
+```
+
+This is a subscription-scoped operation and must be performed before either the
+OIDC workflow or local infrastructure deployment. Those deployments retain only
+the resource-group-scoped assignment of the pre-provisioned initiative. The
+bootstrap administrator remains responsible for subscription-scoped Defender and
+Activity Log controls in `infrastructure/main_subscription.bicep`.
+
+> **Operational validation deferred:** No temporary live subscription-policy
+> bootstrap has been run against the only Azure subscription. Validate this
+> script during the intended retained v2.0.0 deployment, confirming the custom
+> policy definitions and `aks-adversary-lab-logging-initiative` exist before the
+> lab's resource-group policy assignment is deployed.
+
+### GitHub Environment details
 
 1. Go to **Repo Settings → Environments → New environment**
 2. Name it exactly **`lab`**
-3. Optionally add yourself as a **required reviewer** — every deploy/destroy will pause for your approval before running
+3. Add one or more **required reviewers** so every deploy/destroy pauses for
+   approval before Azure login. Required reviewers require a GitHub plan that
+   supports Environment protection rules.
+4. Restrict deployment branches/tags to the protected branch you intend to
+   deploy from.
 
-### Step 3 — Deploy
+### Additional repository protections
+
+The workflow source declares `environment: lab`, but source control cannot create
+or protect a GitHub Environment or ruleset. Before enabling deployment, a
+repository administrator must configure the following in GitHub:
+
+1. Keep the `lab` environment above with required reviewers and restricted
+   deployment branches.
+2. Add the three OIDC identifiers (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and
+   `AZURE_SUBSCRIPTION_ID`) as environment or repository secrets as appropriate
+   for the OIDC setup.
+3. Protect `main` with a ruleset or branch protection requiring pull requests
+   and the required `validate.yaml` checks; limit bypass and force-push
+   permissions to trusted administrators.
+4. Require review for `.github/workflows/` changes (for example through the
+   repository's CODEOWNERS policy).
+
+These are required external GitHub settings; this repository does not assert
+that they are already configured.
+
+### Dispatch and approve deployment
 
 1. Go to **Actions → Deploy AKS Adversary Lab → Run workflow**
 2. Fill in the form:
@@ -166,7 +309,7 @@ The script:
 | Field | Description |
 |---|---|
 | `action` | `deploy` or `destroy` |
-| `name_prefix` | Short lowercase prefix for resource names (e.g. `purpleshell`) |
+| `name_prefix` | Short lowercase prefix for resource names (e.g. `purpleshell`); its derived `rg-<prefix>-aks-lab` resource group must already exist |
 | `location` | Azure region |
 | `authorized_ip` | Your public IP in CIDR format — `curl ifconfig.me` then append `/32` |
 | `admin_group_id` | Object ID of your Entra ID cluster-admin group |
@@ -174,9 +317,9 @@ The script:
 
 3. Click **Run workflow**
 
-The workflow deploys in layers — Bicep first, then namespaces, RBAC, network policies, Falco, monitoring, victim apps, red team tools. Takes roughly 15–20 minutes end to end.
+The workflow deploys in layers — Bicep first, then namespaces, RBAC, network policies, Falco, monitoring, victim apps, red team tools. Falco is a hard deployment gate: a failed or timed-out install stops later workload stages. Red-team and victim image references are pinned to immutable digests, and downloaded red-team release assets are SHA-256 verified before execution. Takes roughly 15–20 minutes end to end.
 
-### Step 4 — Connect
+### Connect
 
 ```bash
 az aks get-credentials \
@@ -187,30 +330,68 @@ kubelogin convert-kubeconfig -l azurecli
 kubectl get nodes
 ```
 
-### Step 5 — Tear Down
+### Tear down
 
-Same workflow, same inputs, change `action` to `destroy`. Deletes the resource group and cleans up orphaned subscription-scope policy assignments.
+Same workflow, same inputs, change `action` to `destroy`. It deletes the AKS
+cluster and the `aks-lab-mitre-logging` policy assignment scoped to the lab
+resource group, but deliberately retains the resource group. The bootstrap
+administrator must review remaining resources and remove the now-empty resource
+group when teardown is complete.
 
-> **Note:** Defender for Cloud pricing tiers and custom policy definitions at subscription scope are **not** removed automatically. See the destroy job summary for manual cleanup commands.
+> **Note:** Defender for Cloud pricing tiers and custom policy definitions at
+> subscription scope are bootstrap-administrator responsibilities and are not
+> managed by the GitHub Actions deployment identity.
 
 ---
 
 ## Option B — Local PowerShell Deploy
 
-Use this when you want to deploy directly from your machine without the pipeline — useful for initial testing or when iterating on infrastructure changes.
+Use this when you want to deploy directly from your machine without the pipeline
+— useful for initial testing or when iterating on infrastructure changes. The
+same boundaries apply: a bootstrap administrator must first create
+`rg-<name_prefix>-aks-lab` in the selected region and run
+`tools/bootstrap-policy-definitions.ps1`.
+
+For a first-time interactive run, start the script with no deployment inputs.
+After Azure sign-in, it guides you through subscription selection (when needed),
+the lowercase name prefix and derived pre-created resource group, Entra
+cluster-admin group object ID, public IPv4 API CIDR (offering a detected `/32`),
+and supported Azure region. It validates each value and verifies that the
+derived resource group already exists in the selected region before prompting
+for the final cost confirmation:
+
+```powershell
+./infrastructure/aks_adversary_lab_deploy.ps1
+```
+
+For automation, use `-NonInteractive`; it never prompts or auto-detects values
+and requires `-SubscriptionId`, `-NamePrefix`, `-Location`,
+`-AdminGroupObjectId`, `-AuthorizedIpRange`, and explicit `-Approve`.
+`-ResourceGroupName` is optional only as the exact derived value
+`rg-<name_prefix>-aks-lab`.
 
 ```powershell
 Connect-AzAccount
 
 ./infrastructure/aks_adversary_lab_deploy.ps1 `
-  -Location          "eastus" `
-  -AdminGroupObjectId "your-entra-group-object-id"
+  -SubscriptionId       "your-subscription-id" `
+  -NamePrefix           "labdemo" `
+  -Location             "eastus" `
+  -AdminGroupObjectId   "your-entra-group-object-id" `
+  -AuthorizedIpRange    "203.0.113.10/32" `
+  -Approve `
+  -NonInteractive
 
 # With Defender for Containers enabled
 ./infrastructure/aks_adversary_lab_deploy.ps1 `
-  -Location          "eastus" `
-  -AdminGroupObjectId "your-entra-group-object-id" `
-  -EnableDefender    $true
+  -SubscriptionId       "your-subscription-id" `
+  -NamePrefix           "labdemo" `
+  -Location             "eastus" `
+  -AdminGroupObjectId   "your-entra-group-object-id" `
+  -AuthorizedIpRange    "203.0.113.10/32" `
+  -EnableDefender       $true `
+  -Approve `
+  -NonInteractive
 ```
 
 After the script completes, apply K8s resources manually:

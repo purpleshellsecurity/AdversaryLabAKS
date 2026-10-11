@@ -39,11 +39,11 @@ exceptions:
     tracking_issue: ""
 
   - id: LAB-004
-    finding: "CI OIDC identity holds subscription-scope User Access Administrator + Resource Policy Contributor"
+    finding: "CI OIDC identity held subscription-scope User Access Administrator + Resource Policy Contributor"
     tool: "design-review"
     severity: "Medium"
     file: "tools/setup-oidc.ps1"
-    justification: "Needed to deploy subscription-scope policy definitions and role assignments. The PR-triggered federated credential was REMOVED, so this identity is only reachable via the gated 'lab' environment and push-to-main. Hardening candidate: replace UAA with a scoped custom role."
+    justification: "Resolved: subscription-scoped policy definition provisioning now runs only through tools/bootstrap-policy-definitions.ps1 under bootstrap-administrator credentials. The OIDC identity is resource-group scoped and its User Access Administrator grant is condition-limited to Bicep-required role definitions."
     approver: "purpleshellsecurity"
     approved_date: "2026-07-22"
     expiration_date: none

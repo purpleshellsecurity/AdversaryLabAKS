@@ -199,8 +199,8 @@ def run_count(endpoint: str, db: str, query: str, token: str | None) -> int:
     """
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
-        # Only attach auth when a token is supplied — the local kustainer emulator
-        # runs unauthenticated, so we don't force a header on it.
+        # Use the supplied KUSTO_TOKEN verbatim as a bearer credential. The local
+        # kustainer emulator runs unauthenticated, so we omit the header there.
         headers["Authorization"] = f"Bearer {token}"
     # The v1 query REST contract: {"db": ..., "csl": <query text>}. rstrip("/")
     # avoids a doubled slash if the endpoint was given with a trailing one.

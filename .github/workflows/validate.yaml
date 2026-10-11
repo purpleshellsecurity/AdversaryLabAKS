@@ -1,23 +1,26 @@
 # =============================================================================
 # validate.yaml — Continuous Integration (CI) gate
 # =============================================================================
-# Runs AUTOMATICALLY on every PR to main and every push to main. It only inspects
-# files in the repo — it NEVER logs into Azure or changes any cloud resource
-# (note: no `permissions: id-token` and no `azure/login` anywhere below). That is
-# what makes it safe to run on every commit. Its job is to answer: "is the code
-# in this repo correct and safe to merge?"
+# Runs automatically on every PR to main and every push to main, or manually for
+# an orphan release-candidate branch. It only inspects files in the repo — it
+# NEVER logs into Azure or changes any cloud resource (note: no
+# `permissions: id-token` and no `azure/login` anywhere below). That is what
+# makes it safe to run on every commit. Its job is to answer: "is the code in
+# this repo correct and safe to merge?"
 #
 # Full walkthrough: docs/WORKFLOWS-EXPLAINED.md
 # =============================================================================
 name: Validate AKS Adversary Lab
 
 # ── Triggers ─────────────────────────────────────────────────────────────────
-# Runs while you iterate on a PR (pull_request) and again after it merges (push).
+# Runs while you iterate on a PR (pull_request), again after it merges (push),
+# or manually without inputs for an orphan release-candidate branch.
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 # ── Concurrency ──────────────────────────────────────────────────────────────
 # One run "slot" per workflow+branch. cancel-in-progress: true means a newer push
@@ -335,7 +338,7 @@ jobs:
       - name: Scan Juice Shop container image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: bkimminich/juice-shop:latest
+          image-ref: docker.io/bkimminich/juice-shop@sha256:2de55d24fbc5b690ea02e5e0edd08f94b3a43bc99a0c8eb18ecbc869f8c68568
           format: table
           severity: CRITICAL,HIGH
           exit-code: 0     # soft fail — Juice Shop is intentionally vulnerable

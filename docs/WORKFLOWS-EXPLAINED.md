@@ -5,7 +5,8 @@ in depth, aimed at someone who wants to *understand* them rather than just run
 them. It assumes only light familiarity with GitHub Actions.
 
 - **`validate.yaml`** — runs automatically on every pull request and push to
-  `main`. It never touches Azure. It only checks that the code in the repo is
+  `main`, and can be manually dispatched for an orphan release-candidate
+  branch. It never touches Azure. It only checks that the code in the repo is
   well-formed and safe. Think of it as the "did we break anything?" gate.
 - **`deploy.yaml`** — runs only when you manually click "Run workflow". It
   actually builds (or tears down) the live AKS lab in your Azure subscription.
@@ -64,8 +65,11 @@ You'll see these words throughout. Here's what each one means in this repo:
 
 The key distinction: **`validate.yaml` reasons about files; `deploy.yaml` changes
 your cloud.** That's why validate runs on every commit and needs no cloud
-credentials, while deploy is manual, requires approval through the `lab`
-environment, and holds write access to Azure.
+credentials, while deploy is manual, can require approval through the `lab`
+environment, and holds write access to Azure. The repository declaration alone
+does not configure Environment protection; an administrator must configure the
+external GitHub controls described in the root
+[tenant-neutral deployment quick start](../README.md#tenant-neutral-deployment-quick-start).
 
 ---
 
@@ -94,12 +98,29 @@ This is the single most important concept for understanding `deploy.yaml`, and
 it's worth understanding before you read the steps.
 
 The deploy workflow logs into Azure using **OIDC federated credentials** — there
-is **no client secret stored anywhere**. Here's the chain:
+is **no client secret stored anywhere**. The Azure access model separates two
+identities: a **bootstrap administrator** with subscription scope creates the
+lab resource group, runs `tools/bootstrap-policy-definitions.ps1` to provision
+the custom policy definitions/initiative, and manages subscription controls,
+while the **deployment identity** is restricted to that pre-created resource
+group. Here is the
+deployment-identity chain:
 
-1. A one-time setup script, `tools/setup-oidc.ps1`, creates an Azure AD (Entra)
+1. After the bootstrap administrator creates the resource group, a one-time
+   setup script, `tools/setup-oidc.ps1`, creates an Azure AD (Entra)
    **App Registration** and attaches a **federated credential** that says, in
    effect: *"trust tokens issued by GitHub Actions for the repo
-   `yourorg/aks-adversary-lab` running in the `lab` environment."*
+   `yourorg/aks-adversary-lab` running in the `lab` environment."* When no
+   `-AppName` override is supplied, the script derives a repeatable display name
+   from normalized repository text plus a short SHA-256 prefix of the tenant ID,
+   subscription ID, and normalized `organization/repository`. This prevents
+   unrelated tenant/repository deployments from reusing a generic application
+   name; an explicit `-AppName` is reused exactly as supplied.
+   Before configuring that trust, the script reads the supplied repository's
+   GitHub OIDC subject-customization API using authenticated `gh` and builds the
+   subject from its authoritative `sub_claim_prefix` and `:environment:lab`.
+   It stops rather than assuming whether GitHub emits a legacy name-based or an
+   immutable ID-based subject.
 2. That script stores three **non-secret identifiers** as GitHub secrets:
    `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. (They're stored
    as secrets for tidiness, but they're identifiers, not passwords.)
@@ -116,13 +137,31 @@ is **no client secret stored anywhere**. Here's the chain:
 
 This is why `deploy.yaml` declares `environment: lab` on every job: the federated
 credential is scoped to that environment, and the `lab` environment is also where
-you can require a manual approval before anything runs. `validate.yaml` has
+you can require a manual approval before anything runs. The deployment identity
+receives Contributor, Resource Policy Contributor, and Azure Kubernetes Service
+RBAC Cluster Admin (`b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b`) only at the lab
+resource group. Its User Access Administrator assignment uses condition version
+`2.0`: role-assignment writes and deletes are limited to the AcrPull, Monitoring
+Contributor, Log Analytics Contributor, and Contributor definitions required by
+Bicep. It cannot use UAA to grant Owner, does not receive subscription roles,
+and cannot create/delete resource groups. `validate.yaml` has
 **none** of this — no `permissions: id-token`, no `azure/login` — because it
 never needs to touch your subscription.
 
 > **Takeaway:** `id-token: write` + `azure/login@v2` + `environment: lab` +
 > the three `AZURE_*` secrets together are the passwordless door into Azure.
 > Remove any one and the deploy can't authenticate.
+
+> **Bootstrap sequencing:** Before either the OIDC workflow or the local lab
+> deploy, the bootstrap administrator must run
+> `tools/bootstrap-policy-definitions.ps1` with their own Azure credentials.
+> `main.bicep` then assigns the known, subscription-scoped initiative at resource
+> group scope; it does not invoke a subscription-scope deployment.
+>
+> **Operational check deferred:** This bootstrap path has not been executed as a
+> temporary test against the only Azure subscription. Validate it as part of the
+> retained v2.0.0 deployment by confirming the definitions and
+> `aks-adversary-lab-logging-initiative` exist before starting `deploy.yaml`.
 
 ---
 
@@ -136,11 +175,14 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 ```
 
-Runs on two events: any pull request **targeting** `main`, and any push
-**landing on** `main`. In practice that means it runs while you're iterating on a
-PR, and again once the PR merges.
+Runs automatically on two events: any pull request **targeting** `main`, and any
+push **landing on** `main`. In practice that means it runs while you're
+iterating on a PR, and again once the PR merges. `workflow_dispatch` has no
+inputs and lets you manually validate an orphan release-candidate branch without
+creating a PR; it remains CI-only and has no Azure login.
 
 ```yaml
 concurrency:
@@ -292,7 +334,7 @@ be counterproductive. It `needs: bicep-validate` so it only runs once the Bicep
 is known to compile.
 
 #### `trivy-scan` (Stage 3)
-Runs **Trivy** against the `bkimminich/juice-shop:latest` container image,
+Runs **Trivy** against the digest-pinned Juice Shop container image,
 reporting CRITICAL/HIGH CVEs. `exit-code: 0` makes it a **soft fail** — Juice Shop
 is a deliberately vulnerable app (it's the "victim" in the lab), so flagging its
 CVEs as build failures would be nonsensical. The comment tells you to flip this to
@@ -326,10 +368,10 @@ define the form fields that human fills in:
 | Input | Purpose | Notes |
 |---|---|---|
 | `action` | `deploy` or `destroy` | A dropdown (`type: choice`). This single field decides which of the two big jobs runs. |
-| `name_prefix` | Names all resources | e.g. `purpleshell` → resource group `rg-purpleshell-aks-lab`. Validated to 3–15 lowercase alphanumerics. |
+| `name_prefix` | Names all resources | e.g. `purpleshell` → the bootstrap-created resource group `rg-purpleshell-aks-lab`. Validated to 3–15 lowercase alphanumerics. |
 | `location` | Azure region | Dropdown of allowed regions, default `eastus`. |
 | `authorized_ip` | Your public IP in CIDR | This locks the AKS API server down to *your* IP. Validated to be a real public IP. |
-| `admin_group_id` | Entra group for cluster-admin | The Azure AD group whose members get AKS admin. |
+| `admin_group_id` | Entra group for cluster-admin | Must be a strict Entra object-ID UUID. |
 | `existing_workspace_id` | Reuse a Log Analytics workspace | Optional. Blank = create a new one. |
 
 ### Top-level config
@@ -351,13 +393,17 @@ permissions:
   id-token: write   # allowed to request an OIDC token → used to log into Azure
   contents: read    # allowed to read the repo (for checkout)
 env:
+  NAME_PREFIX: ${{ github.event.inputs.name_prefix }}
+  # Other dispatch inputs are also exported here, then validated before use.
   RESOURCE_GROUP: rg-${{ github.event.inputs.name_prefix }}-aks-lab
 ```
 
 `id-token: write` is the OIDC permission covered in
 [Authentication](#authentication-how-the-workflows-reach-azure-without-a-password).
-`RESOURCE_GROUP` is a workflow-wide variable derived from your `name_prefix`, so
-every job refers to the same RG name consistently.
+The workflow passes all manual inputs to Bash through environment variables,
+rather than interpolating an input into shell source. `RESOURCE_GROUP` is derived
+from `name_prefix`, so every job refers to the same RG name consistently, but it
+is only used after preflight validation succeeds.
 
 ### The three jobs and their control flow
 
@@ -385,11 +431,16 @@ credential.
 ### Job 1: `preflight` — fail fast, before touching Azure
 
 The entire point of this job is to catch bad input **before** spending 15+
-minutes on a deploy. Its steps:
+minutes on a deploy. It also verifies the bootstrap administrator created the
+derived lab resource group before the OIDC identity can proceed. Its steps:
 
-1. **Validate name prefix** — regex `^[a-z][a-z0-9]{2,14}$`. Must start with a
+1. **Validate action, location, and name prefix** — action must be `deploy` or
+   `destroy`, location must be in the workflow's allowlist, and the prefix must
+   match regex `^[a-z][a-z0-9]{2,14}$`. It must start with a
    letter, 3–15 lowercase alphanumerics. (Azure resource-name rules.)
-2. **Validate IP range** — this is the most thorough step. It:
+2. **Validate the Entra admin group ID** — must match the UUID form used by
+   Entra object IDs, before the workflow is permitted to log into Azure.
+3. **Validate IP range** — this is the most thorough step. It:
    - checks CIDR shape (`x.x.x.x/y`),
    - rejects any octet > 255,
    - and **rejects private/reserved ranges** (RFC 1918 `10./172.16-31./192.168.`,
@@ -398,17 +449,18 @@ minutes on a deploy. Its steps:
    allowlist. A private IP there would either lock *you* out or be meaningless —
    the allowlist needs your **public** IP. The error even tells you to run
    `curl ifconfig.me` to find it.
-3. **Validate existing workspace ID format** — only runs `if` you supplied one
+4. **Validate existing workspace ID format** — only runs `if` you supplied one
    (`existing_workspace_id != ''`). Regex-checks it's a proper Log Analytics
    resource ID. `shopt -s nocasematch` makes the match case-insensitive because
    Azure resource IDs vary in casing (`resourceGroups` vs `resourcegroups`).
-4. **Azure login** — first real cloud contact, via OIDC (no secret).
-5. **Verify Azure access** — `az account show` proves the login actually worked
-   and prints which subscription you're in.
-6. **Verify existing workspace exists** — again `if` you supplied one: confirms
+5. **Azure login** — first real cloud contact, via OIDC (no secret).
+6. **Verify Azure access and the pre-created lab resource group** —
+   `az account show` proves the login worked, and `az group show` verifies the
+   derived resource group exists. The workflow fails instead of creating it.
+7. **Verify existing workspace exists** — again `if` you supplied one: confirms
    the workspace ID you passed actually resolves to a real resource you can see.
 
-Steps 1–3 need no cloud at all (pure input validation); 4–6 do a cheap
+Steps 1–4 need no cloud at all (pure input validation); the remaining steps do a
 round-trip to Azure to confirm credentials and referenced resources. Nothing is
 created here.
 
@@ -424,42 +476,40 @@ steps matters a great deal — it mirrors real infrastructure dependencies.
    AKS cluster.
 3. **Workspace mode** — prints whether it's using your existing workspace or
    creating a new one. Purely informational.
-4. **Create resource group** — `az group create`, tagged with who/when deployed.
+4. **Confirm pre-created resource group** — reports the bootstrap-created
+   target. The deployment identity cannot create or delete resource groups.
 5. **Deploy main stack (Bicep)** — `az deployment group create` against
    `infrastructure/main.bicep`. This is the big one: AKS cluster, ACR, Key Vault,
-   Log Analytics, networking, policies. Note how it captures the deployment's
+   Log Analytics, networking, and the resource-group assignment of the
+   bootstrap-provisioned policy initiative. Note how it captures the deployment's
    **outputs** into `$GITHUB_OUTPUT` (`cluster_name`, `workspace_id`,
    `acr_server`, `keyvault_name`, etc.). Those `steps.bicep.outputs.*` values get
    reused by every later step. `id: bicep` is what makes them addressable.
-6. **Deploy subscription-scope resources** — a *second*, separate Bicep deploy
-   (`az deployment sub create`) at **subscription** scope rather than resource
-   group scope. This handles things that live above the RG: Defender for Cloud
-   plans, activity-log forwarding. It only enables activity-log forwarding when
-   you're creating a *new* workspace (if you brought your own, it assumes you've
-   already wired that up).
-7. **Allowlist runner IP on AKS API server** — a subtle but important step. The
+6. **Allowlist runner IP on AKS API server** — a subtle but important step. The
    Bicep locked the API server down to *your* `authorized_ip`. But the GitHub
    runner isn't you — it has its own IP and needs to run `kubectl` against the
    cluster. So this step discovers the runner's public IP (`curl api.ipify.org`),
    **appends** it to the existing allowlist, and saves it as
    `steps.runner_ip.outputs.ip`. Note it *appends* (`${CURRENT_RANGES},...`) so it
    doesn't clobber your IP.
+7. **Refresh Azure login before AKS access** — renews the short-lived OIDC
+   Azure CLI session after the long Bicep deployment and runner-IP update.
 8. **Get AKS credentials** — pulls kubeconfig and runs
    `kubelogin convert-kubeconfig -l azurecli` so `kubectl` can authenticate.
-9. **Apply Kubernetes layers, in dependency order:**
+8. **Apply Kubernetes layers, in dependency order:**
    - `namespaces/` first (everything else lives inside them),
    - `rbac/` (permissions),
    - `network-policies/` (segmentation),
    - **Falco** via Helm (the runtime threat detector — same chart validated in
-     `helm-lint`). Note `|| echo` so a Falco timeout warns but doesn't fail the
-     whole deploy,
+     `helm-lint`). Helm runs with `--wait --timeout 10m`; any installation
+     failure or timeout fails deployment and prevents the later workload stages,
    - `monitoring/`,
    - `victim-apps/` (Juice Shop etc.),
    - `red-team/` (attacker tooling).
    This order is not arbitrary — namespaces must exist before things go in them,
    RBAC/network policy should exist before workloads, and detection (Falco)
-   should be watching before the victim/attacker workloads come up.
-10. **Deployment summary** — prints a nice box with cluster name, ACR, Key Vault,
+   must install successfully before the victim/attacker workloads come up.
+9. **Deployment summary** — prints a nice box with cluster name, ACR, Key Vault,
     workspace, and the exact `az aks get-credentials` command to connect.
 11. **Remove runner IP from AKS allowlist** — note `if: always()`. This is
     **cleanup that runs even if an earlier step failed**, as long as the runner IP
@@ -477,32 +527,29 @@ steps matters a great deal — it mirrors real infrastructure dependencies.
 
 Runs only `if github.event.inputs.action == 'destroy'`.
 
-1. **Azure login** and **Confirm target** — logs in, prints what's about to be
-   deleted (and notes that a *pre-existing* workspace will be preserved).
+1. **Azure login** and **Confirm target** — logs in, prints the scoped lab
+   resources being torn down, and explicitly states the resource group remains
+   for the bootstrap administrator.
 2. **Delete AKS cluster first (synchronous)** — read the big comment block here;
    it explains a real Azure gotcha. AKS auto-creates a **node resource group**
    with a `ReadOnly` lock (a "deny assignment") that blocks *anyone but AKS* from
    deleting resources inside it. If you just `az group delete` the parent RG,
    it fails with `DenyAssignmentAuthorizationFailed`. The fix: delete the
    **cluster** first (`az aks delete --yes`, synchronously), which makes AKS
-   itself dismantle the node RG cleanly. Only then delete the parent RG. The step
+   itself dismantle the node RG cleanly. The step
    discovers the cluster by listing the RG rather than assuming its name, so it's
    robust to partial/renamed deploys.
-3. **Delete resource group** — `az group delete --no-wait` (fire-and-forget;
-   Azure removes the rest asynchronously). Guarded by `az group exists` so it's a
-   no-op if the RG is already gone.
-4. **Clean up orphaned policy assignments** — the subscription-scope policy
-   assignment (`aks-lab-mitre-logging`) lives *above* the RG, so deleting the RG
-   doesn't remove it. This step finds and deletes it explicitly. Without this,
-   repeated deploy/destroy cycles would leave dangling policy assignments.
-5. **Destroy summary** — prints what was deleted and, importantly, what
-   **persists at subscription scope and is intentionally not removed** (Defender
-   pricing tiers, custom policy definitions, and any pre-existing workspace).
+3. **Delete the scoped policy assignment** — removes only
+   `aks-lab-mitre-logging` in the lab resource group; it does not enumerate
+   subscription assignments.
+4. **Destroy summary** — states that the resource group is retained and tells
+   the bootstrap administrator to inspect remaining resources and delete the
+   group once it is empty.
 
-> **Why destroy is more than one `az group delete`:** two things live outside the
-> resource group (the node-RG lock and the subscription-scope policy) and a
-> naive delete trips over both. The ordering and the explicit policy cleanup are
-> what make destroy reliably idempotent.
+> **Why the resource group is retained:** the OIDC deployment identity is scoped
+> inside the pre-created group. Deleting that group is intentionally reserved for
+> the bootstrap administrator, preventing the GitHub workflow from widening its
+> Azure scope.
 
 ---
 

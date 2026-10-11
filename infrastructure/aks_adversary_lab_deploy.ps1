@@ -15,15 +15,17 @@
 
     FLOW (top-to-bottom, see "Main Execution" at the bottom):
       1. Test-Prerequisites        — verify tooling + Bicep templates are present
-      2. Get-InteractiveParameters — resolve/prompt for every deploy input
-      3. Initialize-AzureContext   — log in and select the subscription
-      4. Show-ConfigurationSummary — print the plan and get a cost-aware y/n
-      5. New-LabResourceGroup      — create the tagged resource group
-      6. Deploy-Infrastructure     — main.bicep (RG-scoped: AKS + logging + ...)
-      7. Deploy-SubscriptionResources — main_subscription.bicep (Defender, etc.)
-      8. Set-KubectlAccess         — pull cluster credentials for kubectl
-      9. Install-KubernetesManifests — apply namespaces, netpol, RBAC, victims
-     10. Show-DeploymentSummary    — outputs + copy/paste post-deploy steps
+      2. Initialize-AzureContext   — log in before listing subscriptions
+      3. Get-DeploymentParameters — resolve/prompt for every deploy input
+      4. Initialize-AzureContext   — select the resolved subscription
+      5. Test-PrecreatedLabResourceGroup — verify the bootstrap-created RG
+      6. Show-ConfigurationSummary — print the plan and get a cost-aware y/n
+      7. Test-PolicyInitiativeBootstrap — confirm subscription policy bootstrap
+      8. Deploy-Infrastructure     — main.bicep (RG-scoped: AKS + logging + ...)
+      9. Deploy-SubscriptionResources — main_subscription.bicep (Defender, etc.)
+     10. Set-KubectlAccess         — pull cluster credentials for kubectl
+     11. Install-KubernetesManifests — apply namespaces, netpol, RBAC, victims
+     12. Show-DeploymentSummary    — outputs + copy/paste post-deploy steps
 
     Two Bicep templates are used because Azure deployments are scoped: most
     resources live inside the resource group (main.bicep), but a few — Defender
@@ -31,7 +33,15 @@
     scope (main_subscription.bicep).
 
 .PARAMETER Location
-    Azure region for deployment (default: eastus2).
+    Azure region for deployment. Prompted interactively when omitted.
+
+.PARAMETER NamePrefix
+    Lowercase 3-15-character resource prefix. The script derives the required
+    pre-created resource group as rg-<NamePrefix>-aks-lab.
+
+.PARAMETER ResourceGroupName
+    Optional explicit form of the derived resource group name. When specified,
+    it must exactly equal rg-<NamePrefix>-aks-lab.
 
 .PARAMETER AdminGroupObjectId
     Entra ID group Object ID for AKS cluster-admin access.
@@ -40,24 +50,45 @@
     Azure subscription ID.
 
 .PARAMETER AuthorizedIpRange
-    Your public IP for API server authorized access (auto-detected if omitted).
+    Your public IPv4 CIDR for API server authorized access. Prompted with a
+    detected /32 suggestion when omitted.
+
+.PARAMETER NonInteractive
+    Requires SubscriptionId, NamePrefix, Location, AdminGroupObjectId, and
+    AuthorizedIpRange to be supplied. The script does not prompt or auto-detect
+    values in this mode. Also requires -Approve before any deployment.
+
+.PARAMETER Approve
+    Explicitly permits a -NonInteractive run to proceed after printing the cost
+    summary. Interactive runs ignore this parameter and ask for confirmation.
 
 .EXAMPLE
     ./infrastructure/aks_adversary_lab_deploy.ps1
 
 .EXAMPLE
-    ./infrastructure/aks_adversary_lab_deploy.ps1 -Location "eastus2" -AdminGroupObjectId "abc-123"
+    ./infrastructure/aks_adversary_lab_deploy.ps1 `
+        -SubscriptionId "<subscription-id>" `
+        -NamePrefix "labdemo" `
+        -Location "eastus2" `
+        -AdminGroupObjectId "<entra-group-object-id>" `
+        -AuthorizedIpRange "203.0.113.10/32" `
+        -Approve `
+        -NonInteractive
 #>
 
-# All params are optional here: anything not supplied on the command line is
-# resolved (or prompted for) inside Get-InteractiveParameters.
+# All deployment values can be supplied for automation. Interactive runs prompt
+# for omitted required values after Azure authentication is available.
 [CmdletBinding()]
 param(
-    [string]$Location = "eastus2",         # Azure region; may be overridden interactively
-    [string]$AdminGroupObjectId,           # Entra group granted cluster-admin (prompted if empty)
-    [string]$SubscriptionId,               # target subscription (auto-selected if only one)
-    [string]$AuthorizedIpRange,            # IP allowed to reach the API server (auto-detected if empty)
-    [bool]$EnableDefender = $false         # Defender for Containers costs extra; off by default
+    [string]$Location,
+    [string]$NamePrefix,
+    [string]$ResourceGroupName,
+    [string]$AdminGroupObjectId,
+    [string]$SubscriptionId,
+    [string]$AuthorizedIpRange,
+    [bool]$EnableDefender = $false,
+    [switch]$Approve,
+    [switch]$NonInteractive
 )
 
 # Stop the whole deployment on the first unhandled error so we don't press on
@@ -84,7 +115,7 @@ function Get-PublicIPAddress {
         # Sanity-check it really is a dotted-quad IPv4 before trusting it — each
         # octet must be 0-255. Guards against an error page sneaking through.
         if ($ip -match '^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$') {
-            return $ip
+            return "$ip/32"
         }
         throw "Invalid IP format"
     }
@@ -92,6 +123,47 @@ function Get-PublicIPAddress {
         # Network blip, timeout, or bad format — degrade gracefully to a prompt.
         Write-ColoredOutput "  Could not auto-detect IP." "Yellow"
         return $null
+    }
+}
+
+function Test-PublicIpv4Cidr {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Value
+    )
+
+    if ($Value -notmatch '^(?<address>(?:\d{1,3}\.){3}\d{1,3})/(?<prefix>\d{1,2})$') {
+        return $false
+    }
+
+    $octets = $Matches.address.Split('.') | ForEach-Object { [int]$_ }
+    $prefixLength = [int]$Matches.prefix
+    if (($octets | Where-Object { $_ -gt 255 }).Count -gt 0 -or $prefixLength -gt 32) {
+        return $false
+    }
+
+    $first = $octets[0]
+    $second = $octets[1]
+    return -not (
+        $first -eq 0 -or
+        $first -eq 10 -or
+        ($first -eq 172 -and $second -ge 16 -and $second -le 31) -or
+        ($first -eq 192 -and $second -eq 168) -or
+        $first -eq 127 -or
+        ($first -eq 169 -and $second -eq 254) -or
+        ($first -ge 224 -and $first -le 239)
+    )
+}
+
+function Test-RequiredValue {
+    param(
+        [string]$Name,
+        [string]$Value,
+        [bool]$NonInteractive
+    )
+
+    if ($NonInteractive -and [string]::IsNullOrWhiteSpace($Value)) {
+        throw "-NonInteractive requires -$Name."
     }
 }
 
@@ -165,22 +237,23 @@ function Initialize-AzureContext {
     }
 }
 
-function Get-InteractiveParameters {
-    # Resolve every deployment input: use what was passed on the command line, and
-    # for anything missing either auto-detect it or prompt the user. Returns a
-    # hashtable of the fully-resolved parameters consumed by the rest of the run.
+function Get-DeploymentParameters {
+    # Resolve every deployment input. Interactive runs guide first-time operators;
+    # noninteractive runs require explicit values so automation never blocks.
     param(
         [string]$Location,
+        [string]$NamePrefix,
+        [string]$ResourceGroupName,
         [string]$AdminGroupObjectId,
         [string]$SubscriptionId,
         [string]$AuthorizedIpRange,
-        [bool]$EnableDefender
+        [bool]$EnableDefender,
+        [bool]$NonInteractive
     )
 
     Write-ColoredOutput "`n[*] Collecting deployment parameters..." "Yellow"
 
-    # -- Subscription -- auto-pick when there's exactly one enabled sub; otherwise
-    # present a numbered menu and let the user choose.
+    Test-RequiredValue -Name "SubscriptionId" -Value $SubscriptionId -NonInteractive $NonInteractive
     if (-not $SubscriptionId) {
         $subs = Get-AzSubscription | Where-Object { $_.State -eq 'Enabled' }
         if ($subs.Count -eq 1) {
@@ -191,74 +264,105 @@ function Get-InteractiveParameters {
             for ($i = 0; $i -lt $subs.Count; $i++) {
                 Write-ColoredOutput "    [$i] $($subs[$i].Name) ($($subs[$i].Id))" "White"
             }
+        do {
             $selection = Read-Host "  Select subscription (0-$($subs.Count - 1))"
-            $SubscriptionId = $subs[$selection].Id
+        } until ($selection -match '^\d+$' -and [int]$selection -lt $subs.Count)
+        $SubscriptionId = $subs[[int]$selection].Id
         }
     }
-    # Make the chosen subscription active for all subsequent Az calls.
-    Set-AzContext -SubscriptionId $SubscriptionId | Out-Null
 
-    # -- Unique lab suffix -- 6 random lowercase-alphanumeric chars, built from the
-    # ASCII ranges a-z (97..122) and 0-9 (48..57). Keeps resource names globally
-    # unique-ish so repeated lab deploys don't collide (ACR/Key Vault names are
-    # global). Every resource in this run shares this suffix.
-    $labSuffix = -join ((97..122) + (48..57) | Get-Random -Count 6 | ForEach-Object { [char]$_ })
-    $ResourceGroupName = "aks-adversary-lab-$labSuffix"
-    $NamePrefix = "lab$labSuffix"
+    Test-RequiredValue -Name "NamePrefix" -Value $NamePrefix -NonInteractive $NonInteractive
+    do {
+        if (-not $NamePrefix) {
+        Write-ColoredOutput "`n  [!] Choose a lowercase 3-15-character prefix. The required resource group is rg-<prefix>-aks-lab." "Yellow"
+        $NamePrefix = Read-Host "  Name prefix"
+        }
+        if ($NamePrefix -notmatch '^[a-z][a-z0-9]{2,14}$') {
+        if ($NonInteractive) {
+            throw "-NamePrefix must be 3-15 lowercase alphanumeric characters starting with a letter."
+        }
+        Write-ColoredOutput "  [!] Name prefix must be 3-15 lowercase alphanumeric characters starting with a letter." "Red"
+        $NamePrefix = $null
+        }
+    } until ($NamePrefix)
 
-    Write-ColoredOutput "  [+] Lab ID: $labSuffix" "Green"
-    Write-ColoredOutput "  [+] Resource Group: $ResourceGroupName" "Green"
-    Write-ColoredOutput "  [+] Resource Prefix: $NamePrefix" "Green"
-
-    # -- Admin group -- AKS is deployed with Entra (AAD) RBAC, so cluster-admin is
-    # granted to an Entra security group rather than individual users. Required, so
-    # prompt if not supplied.
-    if (-not $AdminGroupObjectId) {
-        Write-ColoredOutput "`n  [!] You need an Entra ID security group for AKS cluster-admin access." "Yellow"
-        Write-ColoredOutput "      Create one in Entra ID > Groups, then provide the Object ID." "White"
-        $AdminGroupObjectId = Read-Host "  Entra ID Admin Group Object ID"
+    $derivedResourceGroupName = "rg-$NamePrefix-aks-lab"
+    if ($ResourceGroupName -and $ResourceGroupName -cne $derivedResourceGroupName) {
+        throw "-ResourceGroupName must equal the derived lab group '$derivedResourceGroupName'."
     }
+    $ResourceGroupName = $derivedResourceGroupName
+    Write-ColoredOutput "  [+] Required pre-created resource group: $ResourceGroupName" "Green"
 
-    # -- Authorized IP -- the AKS API server is locked to an allowlist; default it
-    # to this machine's public IP. Offer the detected value, allow override, and
-    # fall back to a manual prompt if detection failed.
+    Test-RequiredValue -Name "AdminGroupObjectId" -Value $AdminGroupObjectId -NonInteractive $NonInteractive
+    do {
+        if (-not $AdminGroupObjectId) {
+        Write-ColoredOutput "`n  [!] Provide the Object ID of the Entra security group that will receive AKS cluster-admin." "Yellow"
+        $AdminGroupObjectId = Read-Host "  Entra ID Admin Group Object ID"
+        }
+        if ($AdminGroupObjectId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+        if ($NonInteractive) {
+            throw "-AdminGroupObjectId must be an Entra object-ID UUID."
+        }
+        Write-ColoredOutput "  [!] Admin group Object ID must be an Entra object-ID UUID." "Red"
+        $AdminGroupObjectId = $null
+        }
+    } until ($AdminGroupObjectId)
+
+    Test-RequiredValue -Name "AuthorizedIpRange" -Value $AuthorizedIpRange -NonInteractive $NonInteractive
     if (-not $AuthorizedIpRange) {
         Write-ColoredOutput "`n  [*] Detecting your public IP..." "Yellow"
         $AuthorizedIpRange = Get-PublicIPAddress
         if ($null -ne $AuthorizedIpRange) {
-            Write-ColoredOutput "  [+] Detected IP: $AuthorizedIpRange" "Green"
-            $confirm = Read-Host "  Use this IP for API server access? (Y/n)"
-            if ($confirm -eq 'n' -or $confirm -eq 'N') {
-                $AuthorizedIpRange = Read-Host "  Enter your public IP address"
-            }
-        } else {
-            $AuthorizedIpRange = Read-Host "  Enter your public IP address"
+        Write-ColoredOutput "  [+] Detected public IPv4 CIDR: $AuthorizedIpRange" "Green"
+        $confirm = Read-Host "  Use this CIDR for API server access? (Y/n)"
+        if ($confirm -eq 'n' -or $confirm -eq 'N') {
+            $AuthorizedIpRange = $null
+        }
         }
     }
 
-    # -- Region -- present a menu when no explicit non-default region was passed.
-    # Note: because the param default is already "eastus2", we can't distinguish
-    # "user typed eastus2" from "user typed nothing", so both re-open the menu.
-    $validLocations = @("eastus", "eastus2", "westus2", "westus3", "centralus", "northeurope", "westeurope", "uksouth", "southeastasia", "australiaeast")
-    if (-not $Location -or $Location -eq "eastus2") {
+    do {
+        if (-not $AuthorizedIpRange) {
+        $AuthorizedIpRange = Read-Host "  Enter a public IPv4 CIDR (for example, 203.0.113.10/32)"
+        }
+        if (-not (Test-PublicIpv4Cidr -Value $AuthorizedIpRange)) {
+        if ($NonInteractive) {
+            throw "-AuthorizedIpRange must be a public IPv4 CIDR."
+        }
+        Write-ColoredOutput "  [!] Authorized IP range must be a public IPv4 CIDR and cannot be private, loopback, link-local, multicast, or reserved." "Red"
+        $AuthorizedIpRange = $null
+        }
+    } until ($AuthorizedIpRange)
+
+    $validLocations = @("eastus", "eastus2", "westus2", "centralus", "uksouth", "westeurope")
+    Test-RequiredValue -Name "Location" -Value $Location -NonInteractive $NonInteractive
+    do {
+        if (-not $Location) {
         Write-ColoredOutput "`n  Select deployment region:" "Cyan"
         for ($i = 0; $i -lt $validLocations.Count; $i++) {
             $default = if ($validLocations[$i] -eq "eastus2") { " (default)" } else { "" }
             Write-ColoredOutput "    [$i] $($validLocations[$i])$default" "White"
         }
         $locSelection = Read-Host "  Select region (0-$($validLocations.Count - 1)) [1 for eastus2]"
-        # Empty input -> index 1, which is eastus2 (the default).
         if ([string]::IsNullOrWhiteSpace($locSelection)) { $locSelection = 1 }
-        $Location = $validLocations[[int]$locSelection]
-    }
+        if ($locSelection -match '^\d+$' -and [int]$locSelection -lt $validLocations.Count) {
+            $Location = $validLocations[[int]$locSelection]
+        }
+        }
+        if ($Location -notin $validLocations) {
+        if ($NonInteractive) {
+            throw "-Location must be one of: $($validLocations -join ', ')."
+        }
+        Write-ColoredOutput "  [!] Select one of: $($validLocations -join ', ')." "Red"
+        $Location = $null
+        }
+    } until ($Location)
     Write-ColoredOutput "  [+] Region: $Location" "Green"
 
-    # Return everything the pipeline needs as a single hashtable.
     return @{
         SubscriptionId     = $SubscriptionId
         ResourceGroupName  = $ResourceGroupName
         NamePrefix         = $NamePrefix
-        LabSuffix          = $labSuffix
         Location           = $Location
         AdminGroupObjectId = $AdminGroupObjectId
         AuthorizedIpRange  = $AuthorizedIpRange
@@ -269,19 +373,31 @@ function Get-InteractiveParameters {
 function Show-ConfigurationSummary {
     # Print the resolved plan and the cost warning, then require an explicit y/n.
     # This is the last stop before any billable resources are created.
-    param([hashtable]$Params)
+    param(
+        [hashtable]$Params,
+        [bool]$NonInteractive,
+        [bool]$Approve
+    )
 
     Write-ColoredOutput "`n=== Configuration Summary ===" "Cyan"
     Write-ColoredOutput "  Subscription:    $($Params.SubscriptionId)" "White"
     Write-ColoredOutput "  Resource Group:  $($Params.ResourceGroupName)" "White"
     Write-ColoredOutput "  Location:        $($Params.Location)" "White"
-    Write-ColoredOutput "  Name Prefix:     $($Params.NamePrefix) (auto-generated)" "White"
+    Write-ColoredOutput "  Name Prefix:     $($Params.NamePrefix)" "White"
     Write-ColoredOutput "  Authorized IP:   $($Params.AuthorizedIpRange)" "White"
     Write-ColoredOutput "  Admin Group:     $($Params.AdminGroupObjectId)" "White"
     Write-ColoredOutput "  Defender:        $(if($Params.EnableDefender){"Enabled (~`$56/mo)"}else{"Disabled (using Falco only)"})" "White"
 
     Write-ColoredOutput "`n[!] This will create Azure resources that incur costs." "Yellow"
     Write-ColoredOutput "    Estimated: ~`$150-200/month (AKS + logging + Defender)" "Yellow"
+
+    if ($NonInteractive) {
+        if (-not $Approve) {
+            throw "-NonInteractive requires -Approve before creating Azure resources."
+        }
+        Write-ColoredOutput "  [+] Noninteractive deployment explicitly approved." "Green"
+        return
+    }
 
     # Explicit opt-in gate. Anything other than 'n'/'N' proceeds; a cancel exits 0
     # (a clean, deliberate no-op, not an error).
@@ -292,20 +408,21 @@ function Show-ConfigurationSummary {
     }
 }
 
-function New-LabResourceGroup {
-    # Create (or overwrite, via -Force) the lab resource group, tagged so it's
-    # easy to identify and clean up later.
-    param([string]$Name, [string]$Location)
+function Test-PrecreatedLabResourceGroup {
+    param(
+        [string]$Name,
+        [string]$Location
+    )
 
-    Write-ColoredOutput "`n[*] Creating resource group: $Name..." "Yellow"
-    # -Force makes this idempotent (no prompt if it already exists). Tags label the
-    # RG as a disposable security lab.
-    New-AzResourceGroup -Name $Name -Location $Location -Force -Tag @{
-        Environment = "SecurityLab"
-        Project     = "AKS-Adversary-Lab"
-        Purpose     = "MITRE-ATT&CK-Containers"
-    } | Out-Null
-    Write-ColoredOutput "  [+] Resource group created." "Green"
+    $resourceGroup = Get-AzResourceGroup -Name $Name -ErrorAction SilentlyContinue
+    if (-not $resourceGroup) {
+        throw "Required lab resource group '$Name' does not exist. A bootstrap administrator must create it before local deployment."
+    }
+    if ($resourceGroup.Location -ine $Location) {
+        throw "Resource group '$Name' is in '$($resourceGroup.Location)', not requested location '$Location'. Use the pre-created resource group's location."
+    }
+
+    Write-ColoredOutput "  [+] Pre-created resource group verified: $Name" "Green"
 }
 
 function Deploy-Infrastructure {
@@ -350,6 +467,19 @@ function Deploy-Infrastructure {
     return @{ Deployment = $rgDeployment; DeploymentName = $deploymentName }
 }
 
+function Test-PolicyInitiativeBootstrap {
+    # The initiative is subscription-scoped and intentionally provisioned by the
+    # bootstrap administrator, not by this RG-scoped lab deployment.
+    $initiative = Get-AzPolicySetDefinition `
+        -Name "aks-adversary-lab-logging-initiative" `
+        -ErrorAction SilentlyContinue
+    if (-not $initiative) {
+        throw "Policy initiative 'aks-adversary-lab-logging-initiative' is missing. Run tools/bootstrap-policy-definitions.ps1 as the bootstrap administrator before deploying the lab."
+    }
+
+    Write-ColoredOutput "  [+] Bootstrap policy initiative verified." "Green"
+}
+
 function Deploy-SubscriptionResources {
     # Deploy main_subscription.bicep at SUBSCRIPTION scope for the handful of
     # resources that can't live inside a resource group (Defender plans, subscription
@@ -382,6 +512,7 @@ function Deploy-SubscriptionResources {
         Write-ColoredOutput "  [!] Subscription deployment failed (non-critical): $_" "Yellow"
         Write-ColoredOutput "      You may need to enable Defender for Containers manually." "White"
     }
+
 }
 
 function Set-KubectlAccess {
@@ -509,28 +640,42 @@ try {
     # 1. Verify local tooling and templates before doing anything billable.
     Test-Prerequisites
 
-    # 2. Resolve/prompt every input into a single $params hashtable.
-    $params = Get-InteractiveParameters `
+    # 2. Authenticate before an interactive run lists available subscriptions.
+    Initialize-AzureContext -SubscriptionId $SubscriptionId
+
+    # 3. Resolve/prompt every input into a single $params hashtable.
+    $params = Get-DeploymentParameters `
         -Location $Location `
+        -NamePrefix $NamePrefix `
+        -ResourceGroupName $ResourceGroupName `
         -AdminGroupObjectId $AdminGroupObjectId `
         -SubscriptionId $SubscriptionId `
         -AuthorizedIpRange $AuthorizedIpRange `
-        -EnableDefender $EnableDefender
+        -EnableDefender $EnableDefender `
+        -NonInteractive $NonInteractive
 
-    # 3. Log in / select the subscription the user chose.
+    # 4. Select the subscription the user chose.
     Initialize-AzureContext -SubscriptionId $params.SubscriptionId
 
-    # 4. Last confirmation before spending money.
-    Show-ConfigurationSummary -Params $params
+    # 5. Verify the bootstrap-created resource group before any deployment.
+    Test-PrecreatedLabResourceGroup `
+        -Name $params.ResourceGroupName `
+        -Location $params.Location
 
-    # 5. Create the resource group that will hold everything.
-    New-LabResourceGroup -Name $params.ResourceGroupName -Location $params.Location
+    # 6. Last confirmation before spending money.
+    Show-ConfigurationSummary `
+        -Params $params `
+        -NonInteractive $NonInteractive `
+        -Approve $Approve
 
-    # 6. Deploy the RG-scoped stack (the long step). Unpack the returned object.
+    # 7. The subscription-scoped policy initiative must already exist.
+    Test-PolicyInitiativeBootstrap
+
+    # 8. Deploy the RG-scoped stack (the long step). Unpack the returned object.
     $infraResult = Deploy-Infrastructure -Params $params
     $rgDeployment = $infraResult.Deployment
 
-    # 7. Deploy the subscription-scoped extras. We pass a small purpose-built
+    # 9. Deploy the subscription-scoped extras. We pass a small purpose-built
     #    hashtable (not the full $params) carrying just what this step needs,
     #    including the RG deployment name so the two deployments are correlated.
     Deploy-SubscriptionResources -Params @{
@@ -539,15 +684,15 @@ try {
         EnableDefender = $params.EnableDefender
     } -RgDeployment $rgDeployment
 
-    # 8. Wire up kubectl. Resolve the cluster name from outputs, or fall back to
+    # 10. Wire up kubectl. Resolve the cluster name from outputs, or fall back to
     #    the conventional "<prefix>-aks" name.
     $clusterName = if ($rgDeployment.Outputs.clusterName) { $rgDeployment.Outputs.clusterName.Value } else { "$($params.NamePrefix)-aks" }
     Set-KubectlAccess -ResourceGroupName $params.ResourceGroupName -ClusterName $clusterName
 
-    # 9. Apply the in-cluster manifests.
+    # 11. Apply the in-cluster manifests.
     Install-KubernetesManifests
 
-    # 10. Print outputs + next steps.
+    # 12. Print outputs + next steps.
     Show-DeploymentSummary -Params $params -RgDeployment $rgDeployment
 
     Write-ColoredOutput "`nDeployment completed successfully!" "Green"

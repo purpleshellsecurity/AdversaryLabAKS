@@ -46,7 +46,7 @@ spec:
       # No hardening securityContext on purpose — a realistically weak target.
       containers:
         - name: juice-shop
-          image: bkimminich/juice-shop:latest  # unpinned `latest`; fine for a throwaway lab
+          image: docker.io/bkimminich/juice-shop@sha256:2de55d24fbc5b690ea02e5e0edd08f94b3a43bc99a0c8eb18ecbc869f8c68568 # intentionally vulnerable image, pinned for reproducibility
           ports:
             - containerPort: 3000
               name: http

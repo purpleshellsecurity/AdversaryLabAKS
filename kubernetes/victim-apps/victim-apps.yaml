@@ -49,7 +49,7 @@ spec:
       # that gives attackers something realistic to exploit and defenders to detect.
       containers:
         - name: dvwa
-          image: docker.io/vulnerables/web-dvwa:latest  # `latest` = unpinned, another weak-by-design choice
+          image: docker.io/vulnerables/web-dvwa@sha256:dae203fe11646a86937bf04db0079adef295f426da68a92b40e3b181f337daa7 # intentionally vulnerable image, pinned for reproducibility
           ports:
             - containerPort: 80
               name: http
@@ -108,7 +108,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: docker.io/hashicorp/http-echo:latest
+          image: docker.io/hashicorp/http-echo@sha256:2c213d6c05a0f68adfe9c7fe1a78a314e5c4fee783e2ee8592d49f10d0c4513f
           args:
             # The echoed text intentionally hints where the SA token is mounted,
             # guiding red-teamers toward token theft (T1528).
@@ -189,7 +189,7 @@ spec:
         spec:
           containers:
             - name: backup
-              image: docker.io/busybox:latest
+              image: docker.io/busybox@sha256:f97baa533a26513c453a362be331a43eb60214302f449c16571b23cea141dce4
               # Harmless echo+sleep stand-in for a real backup routine.
               command: ["/bin/sh", "-c", "echo 'Running scheduled backup...' && sleep 5 && echo 'Backup complete'"]
               resources:
